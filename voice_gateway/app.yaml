@@ -1,0 +1,22 @@
+command:
+  - uvicorn
+  - voice_gateway.api.app:create_app
+  - --host=0.0.0.0
+  - --port=8001
+  - --factory
+
+env:
+  - name: BOOKING_ENGINE_URL
+    description: Base URL of the Booking Engine service
+  - name: DATABRICKS_HOST
+    description: Databricks workspace URL
+  - name: DATABRICKS_TOKEN
+    description: Databricks PAT or OAuth token
+  - name: STT_ENDPOINT
+    value: "whisper-stt-endpoint"
+  - name: TTS_ENDPOINT
+    value: "kokoro-tts-endpoint"
+  - name: INTENT_LLM_ENDPOINT
+    value: "databricks-meta-llama-3-1-8b-instruct"
+  - name: RESPONSE_LLM_ENDPOINT
+    value: "databricks-meta-llama-3-3-70b-instruct"
