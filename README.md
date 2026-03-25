@@ -1,50 +1,44 @@
-# Virtual Assistant
+# Hair Salon Voice Booking Assistant
 
-A business-configurable voice assistant backed by Databricks Model Serving and Lakebase.
-
-## New Flow
-
-```
-1. Specify your business  →  AI generates a tailored system prompt  →  Conversation starts
-```
-
-Instead of a hardcoded Italian hair-salon bot, you configure any business type and the assistant adapts automatically.
-
----
+AI-powered voice assistant for hair salon appointment booking, built on Databricks.
 
 ## Architecture
 
+Two independent services communicating over HTTP:
+
 ```
-virtual_assistant/
-├── core/
-│   ├── business_config.py   # BusinessConfig dataclass + enums
-│   ├── prompt_builder.py    # LLM-based system prompt generation
-│   ├── session.py           # Session state + SessionManager
-│   ├── engine.py            # Core Engine (sync) + ConversationEngine ABC
-│   └── engine_impl.py       # DatabricksConversationEngine (production)
-├── agents/
-│   ├── base.py              # BaseAgent ABC
-│   ├── registry.py          # AgentRegistry (pluggable tools)
-│   ├── database.py          # Lakebase / PostgreSQL helpers
-│   └── tools/
-│       ├── availability.py  # Check appointment availability
-│       └── booking.py       # Book an appointment
-├── api/
-│   ├── app.py               # FastAPI application
-│   ├── models.py            # Pydantic request/response models
-│   └── routes/
-│       ├── health.py        # GET /health
-│       └── sessions.py      # Session CRUD + turn processing
-├── voice/
-│   ├── stt.py               # Speech-to-text (faster-whisper + VAD)
-│   └── tts.py               # Text-to-speech (Databricks Kokoro endpoint)
-├── integrations/
-│   └── databricks.py        # Databricks predict_fn factory
-└── config/
-    └── settings.py          # Settings loaded from env vars
+Customer (phone/web) → Voice Gateway → Booking Engine → Lakebase (PostgreSQL)
+                        ↕
+                   Databricks Model Serving
+                   (Whisper STT, Kokoro TTS,
+                    Llama 8B, Llama 70B)
 ```
 
----
+**Booking Engine** — Stateless REST API for shops, staff, services, customers, availability, and appointments.
+
+**Voice Gateway** — Conversation orchestrator handling STT/TTS, intent routing (small LLM), response generation (large LLM), and per-shop branded prompts.
+
+## Project Structure
+
+```
+booking_engine/          # REST API (FastAPI)
+├── api/routes/          # Shops, customers, services, availability, appointments
+├── db/                  # Async psycopg connection pool + SQL queries
+├── config.py            # Settings from env vars
+└── app.yaml             # Databricks App config
+
+voice_gateway/           # Conversation service (FastAPI + WebSocket)
+├── api/routes/          # Start, turn, end conversation + WS scaffold
+├── conversation/        # Session, prompt assembler, intent router, response composer
+├── voice/               # STT + TTS endpoint clients
+├── clients/             # Booking Engine HTTP client
+├── llm.py               # Databricks Model Serving predict functions
+└── app.yaml             # Databricks App config
+
+lakebase/sql/            # Database schema, seed data, functions
+tests/                   # 31 tests (pytest)
+docs/superpowers/        # Design spec + implementation plan
+```
 
 ## Quickstart
 
@@ -54,113 +48,60 @@ virtual_assistant/
 pip install -r requirements.txt
 ```
 
-### 2. Configure environment
+### 2. Deploy Lakebase schema
 
-Copy `lakebase/config/lakebase.env` and fill in your values:
-
-```env
-DATABRICKS_HOST=https://your-workspace.azuredatabricks.net
-DATABRICKS_TOKEN=your-token
-DATABRICKS_ENDPOINT=personaplex-7b-endpoint
-LAKEBASE_HOST=your-lakebase-host
-LAKEBASE_USER=your-user
-LAKEBASE_PASSWORD=your-password
+Run in order on your Databricks Lakebase instance:
+```
+lakebase/sql/01_schema.sql
+lakebase/sql/02_seed_data.sql
+lakebase/sql/03_functions.sql
 ```
 
-### 3. Run the API
+### 3. Run Booking Engine
 
 ```bash
-uvicorn virtual_assistant.api.app:app --reload --port 8000
+export LAKEBASE_HOST=your-lakebase-host
+export LAKEBASE_USER=your-user
+export LAKEBASE_PASSWORD=your-password
+
+uvicorn booking_engine.api.app:create_app --factory --port 8000
 ```
 
-### 4. Create a session
+### 4. Run Voice Gateway
 
 ```bash
-curl -X POST http://localhost:8000/sessions \
+export BOOKING_ENGINE_URL=http://localhost:8000
+export DATABRICKS_HOST=https://your-workspace.azuredatabricks.net
+export DATABRICKS_TOKEN=your-token
+
+uvicorn voice_gateway.api.app:create_app --factory --port 8001
+```
+
+### 5. Test a conversation (text mode)
+
+```bash
+# Start
+curl -s -X POST http://localhost:8001/conversations/start \
   -H "Content-Type: application/json" \
-  -d '{
-    "business": {
-      "name": "Salon Bella",
-      "business_type": "hair_salon",
-      "services": ["taglio", "colore", "piega"],
-      "language": "it",
-      "tone": "friendly"
-    }
-  }'
-```
+  -d '{"shop_id": "a0000000-0000-0000-0000-000000000001"}' | jq .
 
-Response:
-```json
-{
-  "session_id": "abc-123",
-  "generated_system_prompt": "Sei l'assistente virtuale di Salon Bella...",
-  "greeting": "Ciao! Benvenuto da Salon Bella. Come posso aiutarti oggi?",
-  "business_name": "Salon Bella",
-  "language": "it"
-}
-```
-
-### 5. Send a turn
-
-```bash
-curl -X POST http://localhost:8000/sessions/abc-123/turns \
+# Send a turn
+curl -s -X POST http://localhost:8001/conversations/{session_id}/turn \
   -H "Content-Type: application/json" \
-  -d '{"text": "Vorrei prenotare un taglio per domani"}'
+  -d '{"text": "Sono Maria, vorrei un taglio con Mirco domani"}' | jq .
 ```
 
-### 6. End the session
+## Running Tests
 
 ```bash
-curl -X DELETE http://localhost:8000/sessions/abc-123
+pytest tests/ -v
 ```
 
----
+## Deployment
 
-## API Reference
+Both services deploy as Databricks Apps. See `booking_engine/app.yaml` and `voice_gateway/app.yaml`.
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/health` | Health check |
-| `POST` | `/sessions` | Create session (generates system prompt) |
-| `POST` | `/sessions/{id}/turns` | Process a conversation turn |
-| `GET` | `/sessions/{id}` | Get session summary |
-| `DELETE` | `/sessions/{id}` | End session |
+## Design Docs
 
-Full interactive docs at `http://localhost:8000/docs`.
-
----
-
-## Business Types
-
-| Key | Description |
-|-----|-------------|
-| `hair_salon` | Hair salon — haircuts, coloring, treatments |
-| `restaurant` | Restaurant — reservations, menus |
-| `dental_clinic` | Dental clinic — appointments, consultations |
-| `medical_clinic` | Medical clinic — appointments, specialties |
-| `spa` | Spa — treatments, massages |
-| `gym` | Gym — class bookings, personal training |
-| `general` | Any business |
-
----
-
-## Adding Custom Agents
-
-Implement `BaseAgent` and register it:
-
-```python
-from virtual_assistant.agents.base import BaseAgent
-
-class MyTool(BaseAgent):
-    @property
-    def name(self) -> str:
-        return "my_action"
-
-    def execute(self, args: dict) -> Any:
-        # your logic here
-        return {"result": "..."}
-
-registry.register("my_action", MyTool())
-```
-
-Then include `"my_action"` in the `agent_capabilities` list when creating a session.
+- [Design Spec](docs/superpowers/specs/2026-03-25-hair-salon-voice-assistant-design.md)
+- [Implementation Plan](docs/superpowers/plans/2026-03-25-hair-salon-voice-assistant.md)
