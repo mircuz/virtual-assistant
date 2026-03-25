@@ -1,0 +1,20 @@
+command:
+  - uvicorn
+  - booking_engine.api.app:create_app
+  - --host=0.0.0.0
+  - --port=8000
+  - --factory
+
+env:
+  - name: LAKEBASE_HOST
+    description: Lakebase PostgreSQL host
+  - name: LAKEBASE_PORT
+    value: "5432"
+  - name: LAKEBASE_DB
+    value: "databricks_postgres"
+  - name: LAKEBASE_USER
+    description: Lakebase username
+  - name: LAKEBASE_PASSWORD
+    description: Lakebase password
+  - name: LAKEBASE_SCHEMA
+    value: "hair_salon"
