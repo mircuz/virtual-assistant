@@ -1,0 +1,14 @@
+{
+  "source_catalog": "mircom_test",
+  "source_schema": "assistant_mochi",
+  "target_schema": "assistant_mochi",
+  "tables": [
+    "customers",
+    "staff",
+    "seats",
+    "services",
+    "staff_services",
+    "staff_schedules",
+    "appointments"
+  ]
+}
