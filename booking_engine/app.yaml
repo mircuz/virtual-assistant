@@ -7,14 +7,14 @@ command:
 
 env:
   - name: LAKEBASE_HOST
-    description: Lakebase PostgreSQL host
+    value: "ep-solitary-flower-d30fypjt.database.eu-west-1.cloud.databricks.com"
   - name: LAKEBASE_PORT
     value: "5432"
   - name: LAKEBASE_DB
-    value: "databricks_postgres"
+    value: "hair_salon_db"
   - name: LAKEBASE_USER
-    description: Lakebase username
+    value: "booking_app"
   - name: LAKEBASE_PASSWORD
-    description: Lakebase password
+    value: "ZVMe5zX3nz0GIxGfJPQxEsPFrBjYf9QP65rKlBav0zo"
   - name: LAKEBASE_SCHEMA
     value: "hair_salon"

@@ -1,22 +1,28 @@
 """Booking Engine FastAPI application."""
+import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from booking_engine.config import Settings
 from booking_engine.db.connection import init_pool, close_pool
 
+logger = logging.getLogger(__name__)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = Settings()
+    logger.info("Connecting to Lakebase at %s db=%s user=%s",
+                settings.lakebase_host, settings.lakebase_db, settings.lakebase_user)
     pool = await init_pool(settings)
     app.state.pool = pool
+    logger.info("Connection pool initialized")
     yield
     await close_pool()
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="Hair Salon Booking Engine", version="1.0.0")
+    app = FastAPI(title="Hair Salon Booking Engine", version="1.0.0", lifespan=lifespan)
     app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
     from booking_engine.api.routes import shops, customers, services, availability, appointments
     app.include_router(shops.router, prefix="/api/v1")

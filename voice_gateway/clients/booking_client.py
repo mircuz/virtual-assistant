@@ -10,12 +10,18 @@ import httpx
 class BookingClient:
     """Thin async wrapper around the Booking Engine REST API."""
 
-    def __init__(self, base_url: str = "http://localhost:8000"):
+    def __init__(self, base_url: str = "http://localhost:8000", auth_token: str = ""):
         self._base = base_url.rstrip("/")
+        if not self._base.startswith("http"):
+            self._base = f"https://{self._base}"
+        self._auth_token = auth_token
         self._client: httpx.AsyncClient | None = None
 
     async def __aenter__(self):
-        self._client = httpx.AsyncClient(base_url=self._base, timeout=30.0)
+        headers = {}
+        if self._auth_token:
+            headers["Authorization"] = f"Bearer {self._auth_token}"
+        self._client = httpx.AsyncClient(timeout=30.0, headers=headers)
         return self
 
     async def __aexit__(self, *args):
@@ -31,20 +37,20 @@ class BookingClient:
     # ── Shops ──────────────────────────────────────────
 
     async def get_shop(self, shop_id: UUID) -> dict | None:
-        r = await self.client.get(f"/api/v1/shops/{shop_id}")
+        r = await self.client.get(f"{self._base}/api/v1/shops/{shop_id}")
         return r.json() if r.status_code == 200 else None
 
     # ── Customers ──────────────────────────────────────
 
     async def find_customers_by_phone(self, shop_id: UUID, phone: str) -> list[dict]:
-        r = await self.client.get(f"/api/v1/shops/{shop_id}/customers", params={"phone": phone})
+        r = await self.client.get(f"{self._base}/api/v1/shops/{shop_id}/customers", params={"phone": phone})
         return r.json() if r.status_code == 200 else []
 
     async def find_customer_by_name_phone(
         self, shop_id: UUID, name: str, phone: str
     ) -> list[dict]:
         r = await self.client.get(
-            f"/api/v1/shops/{shop_id}/customers", params={"name": name, "phone": phone}
+            f"{self._base}/api/v1/shops/{shop_id}/customers", params={"name": name, "phone": phone}
         )
         return r.json() if r.status_code == 200 else []
 
@@ -52,7 +58,7 @@ class BookingClient:
         self, shop_id: UUID, full_name: str, phone_number: str | None = None
     ) -> dict:
         r = await self.client.post(
-            f"/api/v1/shops/{shop_id}/customers",
+            f"{self._base}/api/v1/shops/{shop_id}/customers",
             json={"full_name": full_name, "phone_number": phone_number},
         )
         return r.json()
@@ -60,11 +66,11 @@ class BookingClient:
     # ── Services & Staff ───────────────────────────────
 
     async def get_services(self, shop_id: UUID) -> list[dict]:
-        r = await self.client.get(f"/api/v1/shops/{shop_id}/services")
+        r = await self.client.get(f"{self._base}/api/v1/shops/{shop_id}/services")
         return r.json()
 
     async def get_staff(self, shop_id: UUID) -> list[dict]:
-        r = await self.client.get(f"/api/v1/shops/{shop_id}/staff")
+        r = await self.client.get(f"{self._base}/api/v1/shops/{shop_id}/staff")
         return r.json()
 
     # ── Availability ───────────────────────────────────
@@ -80,7 +86,7 @@ class BookingClient:
         }
         if staff_id:
             params["staff_id"] = str(staff_id)
-        r = await self.client.get(f"/api/v1/shops/{shop_id}/availability", params=params)
+        r = await self.client.get(f"{self._base}/api/v1/shops/{shop_id}/availability", params=params)
         return r.json()
 
     # ── Appointments ───────────────────────────────────
@@ -90,7 +96,7 @@ class BookingClient:
         staff_id: UUID, start_time: datetime, notes: str | None = None,
     ) -> dict:
         r = await self.client.post(
-            f"/api/v1/shops/{shop_id}/appointments",
+            f"{self._base}/api/v1/shops/{shop_id}/appointments",
             json={
                 "customer_id": str(customer_id),
                 "service_ids": [str(s) for s in service_ids],
@@ -107,11 +113,11 @@ class BookingClient:
         params = {"customer_id": str(customer_id)}
         if status:
             params["status"] = status
-        r = await self.client.get(f"/api/v1/shops/{shop_id}/appointments", params=params)
+        r = await self.client.get(f"{self._base}/api/v1/shops/{shop_id}/appointments", params=params)
         return r.json()
 
     async def cancel_appointment(self, shop_id: UUID, appointment_id: UUID) -> dict:
-        r = await self.client.patch(f"/api/v1/shops/{shop_id}/appointments/{appointment_id}/cancel")
+        r = await self.client.patch(f"{self._base}/api/v1/shops/{shop_id}/appointments/{appointment_id}/cancel")
         return r.json()
 
     async def reschedule_appointment(
@@ -122,7 +128,7 @@ class BookingClient:
         if new_staff_id:
             body["new_staff_id"] = str(new_staff_id)
         r = await self.client.patch(
-            f"/api/v1/shops/{shop_id}/appointments/{appointment_id}/reschedule",
+            f"{self._base}/api/v1/shops/{shop_id}/appointments/{appointment_id}/reschedule",
             json=body,
         )
         return r.json()

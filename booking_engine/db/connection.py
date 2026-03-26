@@ -14,7 +14,9 @@ async def init_pool(settings: Settings) -> AsyncConnectionPool:
     schema = settings.lakebase_schema
 
     async def configure_conn(conn):
-        await conn.execute("SET search_path TO %s", (schema,))
+        await conn.set_autocommit(True)
+        await conn.execute(f"SET search_path TO {schema}")
+        await conn.set_autocommit(False)
 
     _pool = AsyncConnectionPool(
         conninfo=settings.dsn,

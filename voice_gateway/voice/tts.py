@@ -8,6 +8,8 @@ class TTSClient:
     """Calls a Databricks Model Serving endpoint for Kokoro TTS."""
 
     def __init__(self, host: str, token: str, endpoint: str, voice: str = "af_sky"):
+        if not host.startswith("http"):
+            host = f"https://{host}"
         self._url = f"{host.rstrip('/')}/serving-endpoints/{endpoint}/invocations"
         self._headers = {"Authorization": f"Bearer {token}"}
         self._voice = voice

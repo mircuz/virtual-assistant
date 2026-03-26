@@ -9,6 +9,8 @@ class STTClient:
     """Calls a Databricks Model Serving endpoint for Whisper STT."""
 
     def __init__(self, host: str, token: str, endpoint: str):
+        if not host.startswith("http"):
+            host = f"https://{host}"
         self._url = f"{host.rstrip('/')}/serving-endpoints/{endpoint}/invocations"
         self._headers = {"Authorization": f"Bearer {token}"}
 

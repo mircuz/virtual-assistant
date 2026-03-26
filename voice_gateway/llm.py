@@ -8,6 +8,8 @@ import httpx
 
 def make_predict_fn(host: str, token: str, endpoint: str):
     """Create an async predict function for a Databricks Model Serving endpoint."""
+    if not host.startswith("http"):
+        host = f"https://{host}"
     url = f"{host.rstrip('/')}/serving-endpoints/{endpoint}/invocations"
     headers = {"Authorization": f"Bearer {token}"}
 

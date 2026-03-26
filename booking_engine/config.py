@@ -5,8 +5,8 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     lakebase_host: str
     lakebase_port: int = 5432
-    lakebase_db: str = "databricks_postgres"
-    lakebase_user: str = "authenticator"
+    lakebase_db: str = "hair_salon_db"
+    lakebase_user: str = "booking_app"
     lakebase_password: str = ""
     lakebase_schema: str = "hair_salon"
     lakebase_sslmode: str = "require"
