@@ -71,9 +71,8 @@ async def lifespan(app: FastAPI):
         print(f"[VG] STT={'enabled' if app.state.stt else 'disabled'} TTS={'enabled' if app.state.tts else 'disabled'}")
 
         from voice_gateway.llm import make_predict_fn
-        app.state.intent_predict = make_predict_fn(settings.databricks_host, settings.databricks_token, settings.intent_llm_endpoint)
-        app.state.response_predict = make_predict_fn(settings.databricks_host, settings.databricks_token, settings.response_llm_endpoint)
-        print(f"[VG] LLM endpoints: intent={settings.intent_llm_endpoint} response={settings.response_llm_endpoint}")
+        app.state.llm_predict = make_predict_fn(settings.databricks_host, settings.databricks_token, settings.llm_endpoint)
+        print(f"[VG] LLM endpoint: {settings.llm_endpoint}")
     except Exception as e:
         import traceback
         print(f"[VG] Lifespan init FAILED: {e}\n{traceback.format_exc()}")
@@ -85,6 +84,7 @@ async def lifespan(app: FastAPI):
 
 
 def create_app() -> FastAPI:
+    import pathlib
     app = FastAPI(title="Virtual Assistant Voice Gateway", version="1.0.0", lifespan=lifespan)
     app.add_middleware(
         CORSMiddleware,
@@ -99,5 +99,13 @@ def create_app() -> FastAPI:
     @app.get("/health")
     async def health():
         return {"status": "ok"}
+
+    # Serve test UI
+    static_dir = pathlib.Path(__file__).resolve().parent.parent / "static"
+    if static_dir.exists():
+        from fastapi.responses import FileResponse
+        @app.get("/")
+        async def ui():
+            return FileResponse(static_dir / "index.html")
 
     return app

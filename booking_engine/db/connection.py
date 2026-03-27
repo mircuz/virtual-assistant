@@ -35,50 +35,65 @@ def _fetchone_dict(cursor) -> dict | None:
 def _get_raw_connection():
     global _conn
     if _conn is None:
-        raise RuntimeError("Connection not initialized. Call init_connection first.")
+        _reconnect()
     return _conn
+
+
+def _reconnect():
+    """Reconnect to Databricks SQL."""
+    global _conn
+    if _settings is None:
+        raise RuntimeError("Connection not initialized. Call init_connection first.")
+    logger.info("(Re)connecting to Databricks SQL...")
+    try:
+        if _conn:
+            _conn.close()
+    except Exception:
+        pass
+    _conn = dbsql.connect(
+        server_hostname=_settings.databricks_server_hostname,
+        http_path=_settings.databricks_http_path,
+        access_token=_settings.databricks_token,
+    )
+
+
+def _execute_with_retry(sql: str, params: dict | None, fetch: str):
+    """Execute SQL with one retry on connection error."""
+    for attempt in range(2):
+        try:
+            conn = _get_raw_connection()
+            cursor = conn.cursor()
+            try:
+                cursor.execute(sql, parameters=params)
+                if fetch == "all":
+                    return _rows_to_dicts(cursor) if cursor.description else []
+                elif fetch == "one":
+                    return _fetchone_dict(cursor) if cursor.description else None
+                else:
+                    return None
+            finally:
+                cursor.close()
+        except Exception as e:
+            if attempt == 0:
+                logger.warning("SQL error, reconnecting: %s", e)
+                _reconnect()
+            else:
+                raise
 
 
 async def execute(sql: str, params: dict | None = None) -> list[dict]:
     """Execute a SQL statement and return all rows as dicts."""
-    def _run():
-        conn = _get_raw_connection()
-        cursor = conn.cursor()
-        try:
-            cursor.execute(sql, parameters=params)
-            if cursor.description:
-                return _rows_to_dicts(cursor)
-            return []
-        finally:
-            cursor.close()
-    return await asyncio.to_thread(_run)
+    return await asyncio.to_thread(_execute_with_retry, sql, params, "all")
 
 
 async def execute_one(sql: str, params: dict | None = None) -> dict | None:
     """Execute a SQL statement and return one row as dict."""
-    def _run():
-        conn = _get_raw_connection()
-        cursor = conn.cursor()
-        try:
-            cursor.execute(sql, parameters=params)
-            if cursor.description:
-                return _fetchone_dict(cursor)
-            return None
-        finally:
-            cursor.close()
-    return await asyncio.to_thread(_run)
+    return await asyncio.to_thread(_execute_with_retry, sql, params, "one")
 
 
 async def execute_void(sql: str, params: dict | None = None) -> None:
     """Execute a SQL statement that returns nothing."""
-    def _run():
-        conn = _get_raw_connection()
-        cursor = conn.cursor()
-        try:
-            cursor.execute(sql, parameters=params)
-        finally:
-            cursor.close()
-    await asyncio.to_thread(_run)
+    await asyncio.to_thread(_execute_with_retry, sql, params, "void")
 
 
 async def init_connection(settings: Settings):

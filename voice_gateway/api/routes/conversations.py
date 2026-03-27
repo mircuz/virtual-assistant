@@ -11,8 +11,7 @@ from voice_gateway.api.models import (
     TurnRequest, TurnResponse, EndConversationResponse,
 )
 from voice_gateway.conversation.prompt_assembler import assemble_system_prompt
-from voice_gateway.conversation.intent_router import IntentRouter
-from voice_gateway.conversation.response_composer import ResponseComposer
+from voice_gateway.conversation.agent import ConversationAgent
 
 router = APIRouter(prefix="/conversations", tags=["conversations"])
 
@@ -85,36 +84,39 @@ async def process_turn(session_id: UUID, body: TurnRequest, request: Request):
 
     session.add_user_turn(user_text)
 
-    # Intent routing
-    intent_router = IntentRouter(
-        predict_fn=app.state.intent_predict,
+    # Single LLM call: intent + response
+    agent = ConversationAgent(predict_fn=app.state.llm_predict)
+    response_text, action, args = await agent.process(
+        system_prompt=session.system_prompt,
+        history=session.history,
         services=getattr(session, "_services", []),
         staff=getattr(session, "_staff", []),
     )
-    intent = await intent_router.route(user_text)
-    action = intent.get("action", "none")
-    args = intent.get("args", {})
-    topic = intent.get("topic", "booking_related")
 
+    # Execute booking action if the LLM requested one
     action_result = None
-
-    # Handle customer identification
     if action == "provide_name":
         name = args.get("name", "")
         action_result = await _identify_customer(app, session, name)
-
-    # Execute action against Booking Engine if needed
-    elif topic == "booking_related" and action not in ("none", "chitchat", "off_topic"):
+        # No follow-up LLM call needed — the initial response is already good
+    elif action in ("check_availability", "list_appointments", "book", "cancel", "reschedule"):
         action_result = await _execute_action(app, session, action, args)
-
-    # Compose response
-    composer = ResponseComposer(predict_fn=app.state.response_predict)
-    response_text = await composer.compose(
-        system_prompt=session.system_prompt,
-        history=session.history,
-        action=action,
-        action_result=action_result,
-    )
+        # Follow-up LLM call to incorporate action results into a natural response
+        if action_result:
+            import json as _json
+            session.add_assistant_turn(response_text)
+            result_str = _json.dumps(action_result, default=str, ensure_ascii=False)
+            session.add_user_turn(f"[SISTEMA: risultato azione {action}: {result_str}]")
+            response_text, _, _ = await agent.process(
+                system_prompt=session.system_prompt,
+                history=session.history,
+                services=getattr(session, "_services", []),
+                staff=getattr(session, "_staff", []),
+            )
+    elif action == "ask_service_info":
+        action_result = await _execute_action(app, session, action, args)
+        # Service list is already known to the LLM from the system prompt
+        # No follow-up needed
 
     session.add_assistant_turn(response_text)
 
