@@ -117,7 +117,16 @@ async function startCall() {
     dc.onopen = () => {
       setState('active');
       setStatus('');
-      addBubble(shopData.shop.welcome_message, 'ai');
+      // Make the assistant speak the welcome message
+      dc.send(JSON.stringify({
+        type: 'conversation.item.create',
+        item: {
+          type: 'message',
+          role: 'user',
+          content: [{ type: 'input_text', text: '[Il cliente ha appena chiamato. Salutalo con il messaggio di benvenuto del salone.]' }],
+        },
+      }));
+      dc.send(JSON.stringify({ type: 'response.create' }));
     };
     dc.onmessage = handleRealtimeEvent;
     dc.onclose = () => { if (state === 'active') endCall(); };
@@ -196,50 +205,35 @@ async function handleFunctionCall(msg) {
   const args = JSON.parse(msg.arguments || '{}');
   const callId = msg.call_id;
 
-  setStatus(`Running ${name}...`);
+  setStatus(`${name}...`);
   let result = {};
 
   try {
-    if (name === 'check_availability') {
-      // Call our booking engine via the Databricks App
-      const services = args.services || [];
-      const svcIds = resolveServiceIds(services);
-      const date = args.date || new Date().toISOString().split('T')[0];
-      const staffId = resolveStaffId(args.staff_name);
-
-      const params = new URLSearchParams({
-        service_ids: svcIds.join(','),
-        start_date: date,
-        end_date: date,
-      });
-      if (staffId) params.set('staff_id', staffId);
-
-      const resp = await fetch(
-        `${API}/api/v1/shops/${shopData.shop.id}/availability?${params}`,
-        { credentials: 'include' }
-      );
-      // This proxies to the booking engine through the gateway
-      // Actually we need to call booking engine directly
-      const bookingUrl = document.body.dataset.bookingUrl || API;
-      const resp2 = await fetch(
-        `https://virtual-assistant-booking-1444828305810485.aws.databricksapps.com/api/v1/shops/${shopData.shop.id}/availability?${params}`,
-        { credentials: 'include' }
-      );
-      result = await resp2.json();
-
-    } else if (name === 'get_services') {
-      result = { services: shopData.services };
-
-    } else if (name === 'create_customer') {
-      result = { created: true, name: args.name };
-    }
+    // Route ALL function calls through our gateway server (it has booking engine auth)
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000); // 15s timeout
+    const resp = await fetch(`${API}/api/v1/realtime/action`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        shop_id: shopData.shop.id,
+        function_name: name,
+        arguments: args,
+      }),
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+    result = await resp.json();
+    console.log(`Function ${name} result:`, result);
   } catch (e) {
-    result = { error: e.message };
+    console.error(`Function ${name} error:`, e);
+    result = { error: e.message || 'Timeout o errore di connessione' };
   }
 
   setStatus('');
 
-  // Send function result back to the Realtime API
+  // Send function result back to the Realtime API via data channel
   dc.send(JSON.stringify({
     type: 'conversation.item.create',
     item: {
@@ -251,22 +245,6 @@ async function handleFunctionCall(msg) {
 
   // Resume the conversation
   dc.send(JSON.stringify({ type: 'response.create' }));
-}
-
-function resolveServiceIds(names) {
-  if (!shopData?.services) return [];
-  return names.map(n => {
-    const nl = n.toLowerCase();
-    const svc = shopData.services.find(s => s.name.toLowerCase().includes(nl));
-    return svc?.id;
-  }).filter(Boolean);
-}
-
-function resolveStaffId(name) {
-  if (!name || !shopData?.staff) return null;
-  const nl = name.toLowerCase();
-  const s = shopData.staff.find(s => s.name.toLowerCase().includes(nl));
-  return s?.id || null;
 }
 </script>
 </body>

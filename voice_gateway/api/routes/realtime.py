@@ -1,14 +1,15 @@
-"""Realtime API token endpoint — generates ephemeral tokens for WebRTC sessions."""
+"""Realtime API: token generation + function call proxy for booking actions."""
 from __future__ import annotations
 
 import json
 import os
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from uuid import UUID
 
 import httpx
 from fastapi import APIRouter, Request, Query
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
 router = APIRouter(prefix="/api/v1/realtime", tags=["realtime"])
 
@@ -89,6 +90,34 @@ async def get_realtime_token(request: Request, shop_id: str = Query(...)):
                 "required": ["name"],
             },
         },
+        {
+            "type": "function",
+            "name": "book_appointment",
+            "description": "Prenota un appuntamento per un cliente. Usa dopo aver verificato la disponibilità.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "customer_name": {"type": "string", "description": "Nome del cliente"},
+                    "service_name": {"type": "string", "description": "Nome del servizio"},
+                    "staff_name": {"type": "string", "description": "Nome dello staff"},
+                    "date": {"type": "string", "description": "Data in formato YYYY-MM-DD"},
+                    "time": {"type": "string", "description": "Ora in formato HH:MM"},
+                },
+                "required": ["customer_name", "service_name", "staff_name", "date", "time"],
+            },
+        },
+        {
+            "type": "function",
+            "name": "list_appointments",
+            "description": "Mostra gli appuntamenti di un cliente",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "customer_name": {"type": "string", "description": "Nome del cliente"},
+                },
+                "required": ["customer_name"],
+            },
+        },
     ]
 
     # Request ephemeral token from OpenAI
@@ -123,6 +152,139 @@ async def get_realtime_token(request: Request, shop_id: str = Query(...)):
             "name": shop.get("name"),
             "welcome_message": shop.get("welcome_message", "Ciao, benvenuto!"),
         },
-        "services": [{"id": s.get("id"), "name": s.get("service_name")} for s in services],
+        "services": [{"id": s.get("id"), "name": s.get("service_name"), "duration": s.get("duration_minutes"), "price": float(s.get("price_eur", 0))} for s in services],
         "staff": [{"id": s.get("id"), "name": s.get("full_name")} for s in staff],
     }
+
+
+class FunctionCallRequest(BaseModel):
+    shop_id: str
+    function_name: str
+    arguments: dict
+
+
+@router.post("/action")
+async def execute_action(body: FunctionCallRequest, request: Request):
+    """Proxy function calls from the Realtime API to the booking engine."""
+    import logging
+    logger = logging.getLogger(__name__)
+    app = request.app
+    booking = app.state.booking_client
+    logger.info("Action: %s args=%s shop=%s", body.function_name, body.arguments, body.shop_id)
+
+    try:
+        if body.function_name == "check_availability":
+            service_names = body.arguments.get("services", [])
+            services_list = await booking.get_services(body.shop_id)
+            # Resolve service names to IDs
+            svc_ids = []
+            for name in service_names:
+                nl = name.lower()
+                for svc in services_list:
+                    if nl in svc.get("service_name", "").lower():
+                        svc_ids.append(svc["id"])
+                        break
+            if not svc_ids:
+                return {"slots": [], "message": "Servizio non trovato"}
+
+            date_str = body.arguments.get("date")
+            if date_str:
+                start = date.fromisoformat(date_str)
+            else:
+                start = date.today() + timedelta(days=1)
+            end = start
+
+            staff_name = body.arguments.get("staff_name")
+            staff_id = None
+            if staff_name:
+                staff_list = await booking.get_staff(body.shop_id)
+                nl = staff_name.lower()
+                for s in staff_list:
+                    if nl in s.get("full_name", "").lower():
+                        staff_id = s["id"]
+                        break
+
+            result = await booking.check_availability(body.shop_id, svc_ids, start, end, staff_id)
+            return result
+
+        elif body.function_name == "get_services":
+            services = await booking.get_services(body.shop_id)
+            return {"services": [{"name": s.get("service_name"), "duration": s.get("duration_minutes"), "price": float(s.get("price_eur", 0))} for s in services]}
+
+        elif body.function_name == "create_customer":
+            name = body.arguments.get("name", "")
+            phone = body.arguments.get("phone")
+            customer = await booking.create_customer(body.shop_id, name, phone)
+            return {"created": True, "name": name, "id": customer.get("id") if customer else None}
+
+        elif body.function_name == "book_appointment":
+            # Resolve customer, service, staff by name
+            customer_name = body.arguments.get("customer_name", "")
+            service_name = body.arguments.get("service_name", "")
+            staff_name_arg = body.arguments.get("staff_name", "")
+            date_str = body.arguments.get("date", "")
+            time_str = body.arguments.get("time", "")
+
+            # Find or create customer
+            customers = await booking.find_customers_by_phone(body.shop_id, "")
+            customer_id = None
+            # Search by name in existing customers
+            all_customers_resp = await booking.find_customer_by_name_phone(body.shop_id, customer_name, "")
+            if all_customers_resp:
+                customer_id = all_customers_resp[0].get("id")
+            if not customer_id:
+                new_cust = await booking.create_customer(body.shop_id, customer_name)
+                customer_id = new_cust.get("id") if new_cust else None
+
+            if not customer_id:
+                return {"error": "Impossibile trovare o creare il cliente"}
+
+            # Resolve service
+            services_list = await booking.get_services(body.shop_id)
+            service_id = None
+            for svc in services_list:
+                if service_name.lower() in svc.get("service_name", "").lower():
+                    service_id = svc["id"]
+                    break
+            if not service_id:
+                return {"error": f"Servizio '{service_name}' non trovato"}
+
+            # Resolve staff
+            staff_list = await booking.get_staff(body.shop_id)
+            staff_id = None
+            for s in staff_list:
+                if staff_name_arg.lower() in s.get("full_name", "").lower():
+                    staff_id = s["id"]
+                    break
+            if not staff_id:
+                return {"error": f"Staff '{staff_name_arg}' non trovato"}
+
+            # Build start_time
+            start_time = f"{date_str}T{time_str}:00+01:00"
+
+            appt = await booking.book_appointment(
+                shop_id=body.shop_id,
+                customer_id=customer_id,
+                service_ids=[service_id],
+                staff_id=staff_id,
+                start_time=start_time,
+            )
+            if appt:
+                return {"booked": True, "appointment_id": appt.get("id"), "start_time": start_time, "staff": staff_name_arg, "service": service_name}
+            return {"error": "Errore nella prenotazione"}
+
+        elif body.function_name == "list_appointments":
+            customer_name = body.arguments.get("customer_name", "")
+            # Find customer by name
+            customers = await booking.find_customer_by_name_phone(body.shop_id, customer_name, "")
+            if not customers:
+                return {"appointments": [], "message": "Cliente non trovato"}
+            customer_id = customers[0].get("id")
+            appts = await booking.list_appointments(body.shop_id, customer_id)
+            return {"appointments": [{"id": a.get("id"), "start_time": str(a.get("start_time")), "status": a.get("status"), "staff": a.get("staff_name")} for a in appts]}
+
+        else:
+            return {"error": f"Unknown function: {body.function_name}"}
+
+    except Exception as e:
+        return {"error": str(e)}

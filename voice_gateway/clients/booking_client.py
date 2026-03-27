@@ -101,7 +101,7 @@ class BookingClient:
                 "customer_id": str(customer_id),
                 "service_ids": [str(s) for s in service_ids],
                 "staff_id": str(staff_id),
-                "start_time": start_time.isoformat(),
+                "start_time": start_time.isoformat() if hasattr(start_time, 'isoformat') else str(start_time),
                 "notes": notes,
             },
         )
