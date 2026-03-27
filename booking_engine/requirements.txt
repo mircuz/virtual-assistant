@@ -1,0 +1,4 @@
+pydantic-settings
+databricks-sql-connector
+fastapi
+uvicorn

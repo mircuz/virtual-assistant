@@ -3,20 +3,14 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    lakebase_host: str
-    lakebase_port: int = 5432
-    lakebase_db: str = "hair_salon_db"
-    lakebase_user: str = "booking_app"
-    lakebase_password: str = ""
-    lakebase_schema: str = "hair_salon"
-    lakebase_sslmode: str = "require"
+    databricks_server_hostname: str = ""
+    databricks_http_path: str = ""
+    databricks_token: str = ""
+    databricks_catalog: str = "mircom_test"
+    databricks_schema: str = "virtual_assistant"
 
     @property
-    def dsn(self) -> str:
-        return (
-            f"host={self.lakebase_host} port={self.lakebase_port} "
-            f"dbname={self.lakebase_db} user={self.lakebase_user} "
-            f"password={self.lakebase_password} sslmode={self.lakebase_sslmode}"
-        )
+    def table_prefix(self) -> str:
+        return f"{self.databricks_catalog}.{self.databricks_schema}"
 
     model_config = {"env_prefix": ""}

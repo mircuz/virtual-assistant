@@ -16,7 +16,7 @@ class STTClient:
 
     async def transcribe(self, audio_base64: str) -> str:
         """Send base64-encoded audio to Whisper endpoint, return text."""
-        payload = {"inputs": [audio_base64]}
+        payload = {"dataframe_records": [{"audio": audio_base64}]}
         async with httpx.AsyncClient(timeout=120.0) as client:
             resp = await client.post(
                 self._url,

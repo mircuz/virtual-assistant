@@ -6,15 +6,11 @@ command:
   - --factory
 
 env:
-  - name: LAKEBASE_HOST
-    value: "ep-solitary-flower-d30fypjt.database.eu-west-1.cloud.databricks.com"
-  - name: LAKEBASE_PORT
-    value: "5432"
-  - name: LAKEBASE_DB
-    value: "hair_salon_db"
-  - name: LAKEBASE_USER
-    value: "booking_app"
-  - name: LAKEBASE_PASSWORD
-    value: "ZVMe5zX3nz0GIxGfJPQxEsPFrBjYf9QP65rKlBav0zo"
-  - name: LAKEBASE_SCHEMA
-    value: "hair_salon"
+  - name: DATABRICKS_SERVER_HOSTNAME
+    value: "e2-demo-field-eng.cloud.databricks.com"
+  - name: DATABRICKS_HTTP_PATH
+    value: "/sql/1.0/warehouses/03560442e95cb440"
+  - name: DATABRICKS_CATALOG
+    value: "mircom_test"
+  - name: DATABRICKS_SCHEMA
+    value: "virtual_assistant"

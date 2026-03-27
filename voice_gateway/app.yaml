@@ -7,12 +7,12 @@ command:
 
 env:
   - name: BOOKING_ENGINE_URL
-    value: "https://hair-salon-booking-3488470091230896.aws.databricksapps.com"
+    value: "https://virtual-assistant-booking-1444828305810485.aws.databricksapps.com"
   - name: INTENT_LLM_ENDPOINT
     value: "databricks-gemma-3-12b"
   - name: RESPONSE_LLM_ENDPOINT
     value: "databricks-meta-llama-3-3-70b-instruct"
   - name: STT_ENDPOINT
-    value: "whisper"
+    value: "va_whisper_large_turbo_v3"
   - name: TTS_URL
-    value: "https://kokoro-tts-3488470091230896.aws.databricksapps.com"
+    value: "https://virtual-assistant-tts-1444828305810485.aws.databricksapps.com"
