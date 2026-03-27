@@ -66,10 +66,10 @@ let sid = null, state = 'idle', busy = false;
 let mediaRecorder, audioChunks = [], stream = null;
 let silenceTimer = null, analyser = null, animFrame = null;
 let audioQueue = [], isPlaying = false, streamBubble = null;
-let speechActive = false, speechTimeout = null;
-const SILENCE_MS = 1200;
-const SPEECH_RMS_THRESHOLD = 0.02;
-const SPEECH_FREQ_THRESHOLD = 85; // Hz - human speech is 85-255 Hz fundamental
+let speechActive = false, speechTimeout = null, hasSpoken = false;
+const SILENCE_MS = 1800; // 1.8s silence after speech
+const SPEECH_RMS_THRESHOLD = 0.018;
+const SPEECH_FREQ_THRESHOLD = 85;
 
 function setState(s){
   state=s;
@@ -140,7 +140,10 @@ async function streamTurn(payload){
             document.getElementById('transcript').scrollTop=9e9;
             break;
           case 'audio': setState('speaking'); queueAudio(d.audio_base64); break;
-          case 'turn_end': streamBubble=null; break;
+          case 'turn_end':
+            streamBubble=null;
+            if(d.end_call) { awaitAudioThenEnd(); return; }
+            break;
           case 'error': addBubble('Error: '+d.message,'sys'); break;
         }
       }
@@ -154,6 +157,19 @@ async function streamTurn(payload){
 function awaitAudioThenListen(){
   if(audioQueue.length||isPlaying){setTimeout(awaitAudioThenListen,200);return;}
   if(sid)startListening();
+}
+
+function awaitAudioThenEnd(){
+  if(audioQueue.length||isPlaying){setTimeout(awaitAudioThenEnd,200);return;}
+  // Auto-end the call after the farewell plays
+  setTimeout(()=>{
+    if(sid){
+      fetch(API+'/conversations/'+sid,{method:'DELETE',credentials:'include'}).catch(()=>{});
+      addBubble('Chiamata terminata','sys');
+      sid=null; setState('off');
+      setTimeout(()=>setState('idle'),2000);
+    }
+  }, 500);
 }
 
 // --- Call lifecycle ---
@@ -206,7 +222,7 @@ async function startListening(){
       };
       reader.readAsDataURL(blob);
     };
-    mediaRecorder.start();speechActive=false;
+    mediaRecorder.start();speechActive=false;hasSpoken=false;
   }catch(e){addBubble('Mic unavailable','sys');}
 }
 
@@ -247,15 +263,17 @@ function monitorVol(){
   document.getElementById('volLv').style.width=Math.min(100,rms*500)+'%';
 
   // Detect speech: needs both volume AND speech-frequency energy
-  const isSpeech=rms>SPEECH_RMS_THRESHOLD&&speechRatio>0.3;
+  const isSpeech=rms>SPEECH_RMS_THRESHOLD&&speechRatio>0.2;
 
   if(isSpeech){
+    hasSpoken=true;
     speechActive=true;
     clearTimeout(speechTimeout);
     speechTimeout=setTimeout(()=>{
       speechActive=false;
-      // Silence after speech — send the recording
-      if(state==='listening'&&mediaRecorder&&mediaRecorder.state==='recording'){
+      // Only send if the user actually spoke (not just background noise)
+      if(hasSpoken&&state==='listening'&&mediaRecorder&&mediaRecorder.state==='recording'){
+        hasSpoken=false;
         mediaRecorder.stop();
         if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;}
       }

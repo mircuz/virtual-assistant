@@ -284,10 +284,13 @@ async def _tts_via_gpt_audio(app, text: str) -> str | None:
     url = f"https://{host}/serving-endpoints/{endpoint}/invocations"
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     payload = {
-        "messages": [{"role": "user", "content": f"Dì esattamente questa frase, con tono caldo e accogliente: {text}"}],
+        "messages": [
+            {"role": "system", "content": "Ripeti ESATTAMENTE il testo che ti viene dato. Non aggiungere nulla, non modificare nulla. Ripeti solo le parole esatte."},
+            {"role": "user", "content": text},
+        ],
         "max_tokens": 80,
         "modalities": ["text", "audio"],
-        "audio": {"voice": "coral", "format": "wav"},
+        "audio": {"voice": "nova", "format": "wav"},
     }
     async with httpx.AsyncClient(timeout=30.0) as client:
         resp = await client.post(url, headers=headers, json=payload)
