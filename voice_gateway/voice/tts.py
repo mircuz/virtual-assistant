@@ -16,21 +16,30 @@ class TTSClient:
 
     async def synthesize(self, text: str) -> str:
         """Convert text to speech. Returns base64-encoded audio."""
+        payload = {
+            "dataframe_records": [
+                {"text": text, "voice": self._voice, "language": "it"}
+            ]
+        }
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.post(
                 self._url,
                 headers=self._headers,
-                json={"text": text, "voice": self._voice, "language": "it"},
+                json=payload,
             )
             resp.raise_for_status()
             data = resp.json()
-            # Extract audio from various response shapes
+            # MLflow pyfunc returns {"predictions": [{"audio_base64": "..."}]}
             if isinstance(data, dict):
-                for key in ("audio", "audio_base64", "predictions", "result"):
+                preds = data.get("predictions", [])
+                if preds and isinstance(preds[0], dict):
+                    return preds[0].get("audio_base64", "")
+                if preds and isinstance(preds[0], str):
+                    return preds[0]
+                # Fallback for other response shapes
+                for key in ("audio", "audio_base64", "result"):
                     if key in data:
                         val = data[key]
                         if isinstance(val, str):
                             return val
-                        if isinstance(val, list) and val:
-                            return val[0] if isinstance(val[0], str) else str(val[0])
             return ""
