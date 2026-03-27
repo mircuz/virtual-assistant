@@ -9,5 +9,6 @@ class Settings(BaseSettings):
     stt_endpoint: str = ""
     tts_url: str = ""
     llm_endpoint: str = "databricks-claude-haiku-4-5"
+    gpt_audio_endpoint: str = "gpt-audio"
 
     model_config = {"env_prefix": ""}

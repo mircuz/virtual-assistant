@@ -1,8 +1,10 @@
 """Conversation lifecycle routes: start, turn, end."""
 from __future__ import annotations
 
+import json
 from uuid import UUID
 
+import httpx
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
@@ -49,14 +51,17 @@ async def start_conversation(body: StartConversationRequest, request: Request):
     session._staff_list[:] = staff
     session._services_list[:] = services
 
-    # Greeting
-    greeting = shop.get("welcome_message", f"Ciao, benvenuto! Come ti chiami?")
+    # Greeting — use GPT-Audio for consistent voice
+    greeting = shop.get("welcome_message", "Ciao, benvenuto! Come ti chiami?")
     session.add_assistant_turn(greeting)
 
-    # TTS for greeting (optional)
     greeting_audio = None
-    if app.state.tts:
-        greeting_audio = await app.state.tts.synthesize(greeting)
+    try:
+        greeting_audio = await _tts_via_gpt_audio(app, greeting)
+    except Exception as e:
+        # Fallback to Kokoro
+        if app.state.tts:
+            greeting_audio = await app.state.tts.synthesize(greeting)
 
     return StartConversationResponse(
         session_id=session_id,
@@ -269,3 +274,24 @@ def _resolve_staff_id(name: str | None, staff: list[dict]):
         if name_lower in s.get("full_name", "").lower():
             return UUID(s["id"]) if isinstance(s["id"], str) else s["id"]
     return None
+
+
+async def _tts_via_gpt_audio(app, text: str) -> str | None:
+    """Generate TTS audio using GPT-Audio endpoint. Returns base64 WAV."""
+    host = app.state._gpt_audio_host
+    token = app.state._gpt_audio_token
+    endpoint = app.state._gpt_audio_endpoint
+    url = f"https://{host}/serving-endpoints/{endpoint}/invocations"
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    payload = {
+        "messages": [{"role": "user", "content": f"Dì esattamente questa frase, con tono caldo e accogliente: {text}"}],
+        "max_tokens": 80,
+        "modalities": ["text", "audio"],
+        "audio": {"voice": "coral", "format": "wav"},
+    }
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        resp = await client.post(url, headers=headers, json=payload)
+        resp.raise_for_status()
+        data = resp.json()
+        audio = data.get("choices", [{}])[0].get("message", {}).get("audio", {}).get("data", "")
+        return audio if audio else None

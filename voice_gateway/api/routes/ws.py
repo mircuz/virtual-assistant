@@ -1,17 +1,18 @@
-"""SSE streaming endpoint for real-time voice conversations.
+"""SSE streaming endpoint with GPT-Audio for combined LLM+TTS.
 
-Uses Server-Sent Events (SSE) for streaming LLM tokens + TTS audio chunks
-back to the client, since Databricks Apps proxy doesn't support WebSocket.
-
-Flow: POST /turn → SSE stream of tokens + audio chunks
+Flow: POST /stream → SSE stream of transcript tokens + PCM16 audio chunks
 """
 from __future__ import annotations
 
 import asyncio
+import base64
+import io
 import json
 import re
+import struct
 from uuid import UUID
 
+import httpx
 from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 
@@ -20,29 +21,40 @@ from voice_gateway.api.models import TurnRequest
 router = APIRouter(tags=["streaming"])
 
 
+def _pcm16_to_wav(pcm_data: bytes, sample_rate: int = 24000, channels: int = 1, bits: int = 16) -> bytes:
+    """Convert raw PCM16 bytes to WAV format."""
+    data_size = len(pcm_data)
+    buf = io.BytesIO()
+    # RIFF header
+    buf.write(b'RIFF')
+    buf.write(struct.pack('<I', 36 + data_size))
+    buf.write(b'WAVE')
+    # fmt chunk
+    buf.write(b'fmt ')
+    buf.write(struct.pack('<I', 16))
+    buf.write(struct.pack('<HHIIHH', 1, channels, sample_rate, sample_rate * channels * bits // 8, channels * bits // 8, bits))
+    # data chunk
+    buf.write(b'data')
+    buf.write(struct.pack('<I', data_size))
+    buf.write(pcm_data)
+    return buf.getvalue()
+
+
 @router.post("/conversations/{session_id}/stream")
 async def stream_turn(session_id: UUID, body: TurnRequest, request: Request):
-    """Process a turn with streaming response: SSE of text tokens + TTS audio chunks."""
     app = request.app
     mgr = app.state.session_manager
     session = mgr.get_session(session_id)
 
     if not session:
-        return StreamingResponse(
-            _error_stream("Session not found"),
-            media_type="text/event-stream",
-        )
+        return StreamingResponse(_error_stream("Session not found"), media_type="text/event-stream")
 
-    # Get user text
     user_text = body.text
     if not user_text and body.audio_base64 and app.state.stt:
         user_text = await app.state.stt.transcribe(body.audio_base64)
 
     if not user_text:
-        return StreamingResponse(
-            _error_stream("No input"),
-            media_type="text/event-stream",
-        )
+        return StreamingResponse(_error_stream("No input"), media_type="text/event-stream")
 
     return StreamingResponse(
         _stream_turn(app, session, user_text),
@@ -52,14 +64,10 @@ async def stream_turn(session_id: UUID, body: TurnRequest, request: Request):
 
 
 async def _stream_turn(app, session, user_text: str):
-    """Generator that yields SSE events: transcript, token, audio, turn_end."""
     session.add_user_turn(user_text)
-
-    # Emit the transcribed text
     yield _sse("transcript", {"text": user_text})
     yield _sse("status", {"status": "thinking"})
 
-    # Build messages
     from datetime import datetime
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
     services = getattr(session, "_services", [])
@@ -70,63 +78,86 @@ async def _stream_turn(app, session, user_text: str):
         f"Data e ora corrente: {now}\n"
         f"Servizi disponibili: {', '.join(services) if services else 'nessuno'}\n"
         f"Staff disponibile: {', '.join(staff) if staff else 'nessuno'}\n\n"
-        "REGOLE TASSATIVE:\n"
+        "REGOLE TASSATIVE PER LA RISPOSTA:\n"
         "- Rispondi SEMPRE in italiano, breve e naturale, 1-2 frasi massimo\n"
-        "- NON usare MAI emoji, simboli o caratteri speciali\n"
-        "- Parla come in una vera telefonata: colloquiale, diretto, umano\n"
-        "- Usa frasi brevi e scorrevoli, facili da pronunciare ad alta voce"
+        "- NON usare MAI emoji, simboli, asterischi o caratteri speciali\n"
+        "- Parla come in una vera telefonata: colloquiale, diretto, caldo\n"
+        "- Usa un tono solare e accogliente, come chi ama il proprio lavoro\n"
+        "- Usa espressioni naturali italiane: 'certo!', 'dimmi pure', 'figurati', 'ma dai!'\n"
+        "- Frasi brevi e scorrevoli, facili da pronunciare ad alta voce\n"
+        "- NON elencare prezzi a meno che non li chiedano"
     )
 
     messages = [{"role": "system", "content": enhanced_system}]
     messages.extend(session.history)
 
-    # Stream LLM tokens, fire TTS asynchronously per clause
-    predict_fn = app.state.llm_predict
-    tts = app.state.tts
-    full_text = ""
-    sentence_buffer = ""
-    # Queue of TTS futures — fire and collect in order
-    tts_tasks: list[asyncio.Task] = []
+    # Use GPT-Audio for combined LLM+TTS (streaming)
+    host = app.state._gpt_audio_host
+    token = app.state._gpt_audio_token
+    endpoint = app.state._gpt_audio_endpoint
+
+    url = f"https://{host}/serving-endpoints/{endpoint}/invocations"
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+    payload = {
+        "messages": messages,
+        "max_tokens": 150,
+        "temperature": 0.4,
+        "modalities": ["text", "audio"],
+        "audio": {"voice": "coral", "format": "pcm16"},
+        "stream": True,
+    }
+
+    full_transcript = ""
+    pcm_buffer = b""
 
     yield _sse("status", {"status": "speaking"})
 
-    async for token in predict_fn.stream(messages, temperature=0.3, max_tokens=200):
-        full_text += token
-        sentence_buffer += token
-        yield _sse("token", {"text": token})
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        async with client.stream("POST", url, headers=headers, json=payload) as resp:
+            resp.raise_for_status()
+            async for line in resp.aiter_lines():
+                if not line.startswith("data: "):
+                    continue
+                data_str = line[6:]
+                if data_str == "[DONE]":
+                    break
+                try:
+                    chunk = json.loads(data_str)
+                    choices = chunk.get("choices", [])
+                    if not choices:
+                        continue
+                    delta = choices[0].get("delta", {})
 
-        # On sentence boundary, fire TTS in background
-        if tts and re.search(r'[.!?,;]\s*$', sentence_buffer):
-            chunk = sentence_buffer.strip()
-            sentence_buffer = ""
-            if chunk:
-                task = asyncio.create_task(tts.synthesize(chunk))
-                tts_tasks.append(task)
-                # If first chunk is ready, yield it immediately
-                if tts_tasks[0].done():
-                    try:
-                        audio = tts_tasks.pop(0).result()
-                        if audio:
-                            yield _sse("audio", {"audio_base64": audio})
-                    except Exception:
-                        tts_tasks.pop(0) if tts_tasks else None
+                    # Text transcript tokens
+                    audio_delta = delta.get("audio", {})
+                    transcript = audio_delta.get("transcript", "")
+                    if transcript:
+                        full_transcript += transcript
+                        yield _sse("token", {"text": transcript})
 
-    # TTS remaining buffer
-    if tts and sentence_buffer.strip():
-        task = asyncio.create_task(tts.synthesize(sentence_buffer.strip()))
-        tts_tasks.append(task)
+                    # PCM16 audio data chunks
+                    audio_data = audio_delta.get("data", "")
+                    if audio_data:
+                        pcm_bytes = base64.b64decode(audio_data)
+                        pcm_buffer += pcm_bytes
+                        # Send audio in ~0.5s chunks (24000 Hz * 2 bytes * 0.5s = 24000 bytes)
+                        while len(pcm_buffer) >= 24000:
+                            chunk_pcm = pcm_buffer[:24000]
+                            pcm_buffer = pcm_buffer[24000:]
+                            wav = _pcm16_to_wav(chunk_pcm)
+                            yield _sse("audio", {"audio_base64": base64.b64encode(wav).decode()})
 
-    # Drain all pending TTS tasks in order
-    for task in tts_tasks:
-        try:
-            audio = await task
-            if audio:
-                yield _sse("audio", {"audio_base64": audio})
-        except Exception:
-            pass
+                except json.JSONDecodeError:
+                    continue
 
-    session.add_assistant_turn(full_text)
-    yield _sse("turn_end", {"full_text": full_text})
+    # Flush remaining PCM buffer
+    if pcm_buffer:
+        wav = _pcm16_to_wav(pcm_buffer)
+        yield _sse("audio", {"audio_base64": base64.b64encode(wav).decode()})
+
+    session.add_assistant_turn(full_transcript)
+    yield _sse("turn_end", {"full_text": full_transcript})
 
 
 async def _error_stream(message: str):

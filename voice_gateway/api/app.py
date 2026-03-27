@@ -72,7 +72,11 @@ async def lifespan(app: FastAPI):
 
         from voice_gateway.llm import make_predict_fn
         app.state.llm_predict = make_predict_fn(settings.databricks_host, settings.databricks_token, settings.llm_endpoint)
-        print(f"[VG] LLM endpoint: {settings.llm_endpoint}")
+        # GPT-Audio for streaming LLM+TTS
+        app.state._gpt_audio_host = settings.databricks_host.replace("https://", "")
+        app.state._gpt_audio_token = settings.databricks_token
+        app.state._gpt_audio_endpoint = settings.gpt_audio_endpoint
+        print(f"[VG] LLM: {settings.llm_endpoint}  GPT-Audio: {settings.gpt_audio_endpoint}")
     except Exception as e:
         import traceback
         print(f"[VG] Lifespan init FAILED: {e}\n{traceback.format_exc()}")

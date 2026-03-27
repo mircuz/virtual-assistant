@@ -66,7 +66,10 @@ let sid = null, state = 'idle', busy = false;
 let mediaRecorder, audioChunks = [], stream = null;
 let silenceTimer = null, analyser = null, animFrame = null;
 let audioQueue = [], isPlaying = false, streamBubble = null;
-const SILENCE_MS = 1500, SILENCE_THRESHOLD = 0.015;
+let speechActive = false, speechTimeout = null;
+const SILENCE_MS = 1200;
+const SPEECH_RMS_THRESHOLD = 0.02;
+const SPEECH_FREQ_THRESHOLD = 85; // Hz - human speech is 85-255 Hz fundamental
 
 function setState(s){
   state=s;
@@ -203,7 +206,7 @@ async function startListening(){
       };
       reader.readAsDataURL(blob);
     };
-    mediaRecorder.start();resetSilence();
+    mediaRecorder.start();speechActive=false;
   }catch(e){addBubble('Mic unavailable','sys');}
 }
 
@@ -216,23 +219,50 @@ function stopListening(){
 
 function monitorVol(){
   if(!analyser||state!=='listening')return;
-  const d=new Float32Array(analyser.fftSize);
-  analyser.getFloatTimeDomainData(d);
-  let s=0;for(let i=0;i<d.length;i++)s+=d[i]*d[i];
-  const rms=Math.sqrt(s/d.length);
-  document.getElementById('volLv').style.width=Math.min(100,rms*500)+'%';
-  if(rms>SILENCE_THRESHOLD)resetSilence();
-  animFrame=requestAnimationFrame(monitorVol);
-}
 
-function resetSilence(){
-  clearTimeout(silenceTimer);
-  silenceTimer=setTimeout(()=>{
-    if(state==='listening'&&mediaRecorder&&mediaRecorder.state==='recording'){
-      mediaRecorder.stop();
-      if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;}
-    }
-  },SILENCE_MS);
+  // Frequency domain analysis for speech detection
+  const freqData=new Uint8Array(analyser.frequencyBinCount);
+  analyser.getByteFrequencyData(freqData);
+
+  // Check energy in speech frequency range (85-400 Hz)
+  // With fftSize=512, sampleRate=48000: each bin = 48000/512 = 93.75 Hz
+  // Speech range bins: ~1-4 (93-375 Hz)
+  const sampleRate=analyser.context?.sampleRate||48000;
+  const binHz=sampleRate/analyser.fftSize;
+  const speechLow=Math.floor(85/binHz);
+  const speechHigh=Math.ceil(400/binHz);
+  let speechEnergy=0,totalEnergy=0;
+  for(let i=speechLow;i<=speechHigh&&i<freqData.length;i++) speechEnergy+=freqData[i];
+  for(let i=0;i<freqData.length;i++) totalEnergy+=freqData[i];
+
+  // Speech ratio: if most energy is in speech band, it's likely voice
+  const speechRatio=totalEnergy>0?speechEnergy/totalEnergy:0;
+
+  // Also check RMS for volume
+  const timeData=new Float32Array(analyser.fftSize);
+  analyser.getFloatTimeDomainData(timeData);
+  let s=0;for(let i=0;i<timeData.length;i++)s+=timeData[i]*timeData[i];
+  const rms=Math.sqrt(s/timeData.length);
+
+  document.getElementById('volLv').style.width=Math.min(100,rms*500)+'%';
+
+  // Detect speech: needs both volume AND speech-frequency energy
+  const isSpeech=rms>SPEECH_RMS_THRESHOLD&&speechRatio>0.3;
+
+  if(isSpeech){
+    speechActive=true;
+    clearTimeout(speechTimeout);
+    speechTimeout=setTimeout(()=>{
+      speechActive=false;
+      // Silence after speech — send the recording
+      if(state==='listening'&&mediaRecorder&&mediaRecorder.state==='recording'){
+        mediaRecorder.stop();
+        if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;}
+      }
+    },SILENCE_MS);
+  }
+
+  animFrame=requestAnimationFrame(monitorVol);
 }
 </script>
 </body>
