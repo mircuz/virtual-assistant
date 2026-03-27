@@ -19,21 +19,14 @@
   .call-area{padding:20px;display:flex;flex-direction:column;align-items:center;gap:14px;border-top:1px solid #1a1d2e}
   .voice-ring{width:90px;height:90px;border-radius:50%;display:flex;align-items:center;justify-content:center;cursor:pointer;transition:all .3s}
   .voice-ring.idle{background:#1a3a1a;border:3px solid #22c55e}
-  .voice-ring.listening{background:#1a2a4a;border:3px solid #3b82f6;animation:breathe 2s infinite}
-  .voice-ring.processing{background:#2a2a1a;border:3px solid #f59e0b}
-  .voice-ring.speaking{background:#1a1a3a;border:3px solid #8b5cf6;animation:pulse .8s infinite}
+  .voice-ring.connecting{background:#2a2a1a;border:3px solid #f59e0b;animation:pulse .8s infinite}
+  .voice-ring.active{background:#1a2a4a;border:3px solid #3b82f6;animation:breathe 2s infinite}
   .voice-ring.off{background:#2a1a1a;border:3px solid #ef4444}
   .voice-ring svg{width:32px;height:32px}
   .voice-label{font-size:12px;color:#666;letter-spacing:.5px}
-  .vol-bar{width:180px;height:3px;background:#1a1d2e;border-radius:2px;overflow:hidden}
-  .vol-bar .lv{height:100%;background:#3b82f6;width:0%;transition:width 50ms}
-  .text-row{display:flex;gap:8px;width:100%;max-width:360px}
-  .text-row input{flex:1;background:#1a1d2e;border:1px solid #2a2d3e;color:#e0e0e0;padding:8px 14px;border-radius:20px;font-size:13px;outline:none}
-  .text-row input:focus{border-color:#3b82f6}
-  .text-row button{background:#3b82f6;color:#fff;border:none;width:34px;height:34px;border-radius:50%;cursor:pointer}
   @keyframes fadeIn{from{opacity:0;transform:translateY(4px)}to{opacity:1}}
   @keyframes breathe{0%,100%{box-shadow:0 0 0 0 rgba(59,130,246,.3)}50%{box-shadow:0 0 0 12px rgba(59,130,246,0)}}
-  @keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(139,92,246,.3)}50%{box-shadow:0 0 0 10px rgba(139,92,246,0)}}
+  @keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(245,158,11,.3)}50%{box-shadow:0 0 0 10px rgba(245,158,11,0)}}
 </style>
 </head>
 <body>
@@ -49,238 +42,231 @@
   <div class="call-area">
     <div class="voice-label" id="label">Tap to call</div>
     <div class="voice-ring idle" id="ring" onclick="toggleCall()">
-      <svg id="icoPhone" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
-      <svg id="icoMic" style="display:none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/></svg>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
     </div>
-    <div class="vol-bar" id="volBar" style="display:none"><div class="lv" id="volLv"></div></div>
-    <div class="text-row">
-      <input type="text" id="txtIn" placeholder="Or type here..." disabled onkeydown="if(event.key==='Enter')sendText()">
-      <button id="sendBtn" disabled onclick="sendText()">&#10148;</button>
-    </div>
+    <div class="voice-label" id="status"></div>
   </div>
 </div>
 
 <script>
 const API = location.origin;
-let sid = null, state = 'idle', busy = false;
-let mediaRecorder, audioChunks = [], stream = null;
-let silenceTimer = null, analyser = null, animFrame = null;
-let audioQueue = [], isPlaying = false, streamBubble = null;
-let speechActive = false, speechTimeout = null, hasSpoken = false;
-const SILENCE_MS = 1800; // 1.8s silence after speech
-const SPEECH_RMS_THRESHOLD = 0.018;
-const SPEECH_FREQ_THRESHOLD = 85;
+let pc = null, dc = null, state = 'idle';
+let currentBubble = null;
+let shopData = null;
 
-function setState(s){
-  state=s;
-  document.getElementById('ring').className='voice-ring '+s;
-  document.getElementById('icoPhone').style.display=(s==='idle'||s==='off')?'':'none';
-  document.getElementById('icoMic').style.display=(s!=='idle'&&s!=='off')?'':'none';
-  document.getElementById('volBar').style.display=s==='listening'?'':'none';
-  const L={idle:'Tap to call',listening:'Listening...',processing:'Processing...',speaking:'Speaking...',off:'Call ended'};
-  document.getElementById('label').textContent=L[s]||'';
-  document.getElementById('txtIn').disabled=!sid||busy;
-  document.getElementById('sendBtn').disabled=!sid||busy;
+function setState(s) {
+  state = s;
+  const ring = document.getElementById('ring');
+  ring.className = 'voice-ring ' + s;
+  const labels = {idle:'Tap to call', connecting:'Connecting...', active:'In call', off:'Call ended'};
+  document.getElementById('label').textContent = labels[s] || '';
 }
 
-function addBubble(text,cls){
-  const t=document.getElementById('transcript'),d=document.createElement('div');
-  d.className='bubble '+cls; d.textContent=text;
-  t.appendChild(d); t.scrollTop=t.scrollHeight; return d;
+function setStatus(text) {
+  document.getElementById('status').textContent = text;
 }
 
-function queueAudio(b64){audioQueue.push(b64);if(!isPlaying)playNext();}
-function playNext(){
-  if(!audioQueue.length){isPlaying=false;return;}
-  isPlaying=true;
-  const b=atob(audioQueue.shift()),a=new Uint8Array(b.length);
-  for(let i=0;i<b.length;i++)a[i]=b.charCodeAt(i);
-  const au=new Audio(URL.createObjectURL(new Blob([a],{type:'audio/wav'})));
-  au.onended=playNext; au.onerror=playNext; au.play().catch(playNext);
+function addBubble(text, cls) {
+  const t = document.getElementById('transcript');
+  const d = document.createElement('div');
+  d.className = 'bubble ' + cls;
+  d.textContent = text;
+  t.appendChild(d);
+  t.scrollTop = t.scrollHeight;
+  return d;
 }
 
-// --- SSE streaming turn ---
-async function streamTurn(payload){
-  busy=true;
-  setState('processing');
-  streamBubble=null;
-  try{
-    const resp=await fetch(API+'/conversations/'+sid+'/stream',{
-      method:'POST', credentials:'include',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify(payload),
+async function toggleCall() {
+  if (state === 'active' || state === 'connecting') { endCall(); return; }
+  startCall();
+}
+
+async function startCall() {
+  document.getElementById('transcript').innerHTML = '';
+  setState('connecting');
+  setStatus('Requesting token...');
+
+  try {
+    // 1. Get ephemeral token from our server
+    const shopId = document.getElementById('shop').value;
+    const tokenResp = await fetch(`${API}/api/v1/realtime/token?shop_id=${shopId}`, {
+      method: 'POST', credentials: 'include',
     });
-    const reader=resp.body.getReader();
-    const decoder=new TextDecoder();
-    let buf='';
-    while(true){
-      const{done,value}=await reader.read();
-      if(done)break;
-      buf+=decoder.decode(value,{stream:true});
-      // Parse SSE events from buffer
-      const parts=buf.split('\n\n');
-      buf=parts.pop(); // keep incomplete
-      for(const part of parts){
-        let evName='message',evData='';
-        for(const line of part.split('\n')){
-          if(line.startsWith('event: '))evName=line.slice(7);
-          else if(line.startsWith('data: '))evData=line.slice(6);
-        }
-        if(!evData)continue;
-        const d=JSON.parse(evData);
-        switch(evName){
-          case 'transcript': addBubble(d.text,'user'); break;
-          case 'status':
-            if(d.status==='speaking')setState('speaking');
-            else if(d.status==='thinking')setState('processing');
-            break;
-          case 'token':
-            if(!streamBubble)streamBubble=addBubble('','ai');
-            streamBubble.textContent+=d.text;
-            document.getElementById('transcript').scrollTop=9e9;
-            break;
-          case 'audio': setState('speaking'); queueAudio(d.audio_base64); break;
-          case 'turn_end':
-            streamBubble=null;
-            if(d.end_call) { awaitAudioThenEnd(); return; }
-            break;
-          case 'error': addBubble('Error: '+d.message,'sys'); break;
-        }
-      }
-    }
-  }catch(e){addBubble('Error: '+e.message,'sys');}
-  busy=false;
-  // Wait for audio to finish, then listen
-  awaitAudioThenListen();
-}
+    const tokenData = await tokenResp.json();
+    if (tokenData.error) throw new Error(tokenData.error);
 
-function awaitAudioThenListen(){
-  if(audioQueue.length||isPlaying){setTimeout(awaitAudioThenListen,200);return;}
-  if(sid)startListening();
-}
+    shopData = tokenData;
+    const ephemeralToken = tokenData.token;
 
-function awaitAudioThenEnd(){
-  if(audioQueue.length||isPlaying){setTimeout(awaitAudioThenEnd,200);return;}
-  // Auto-end the call after the farewell plays
-  setTimeout(()=>{
-    if(sid){
-      fetch(API+'/conversations/'+sid,{method:'DELETE',credentials:'include'}).catch(()=>{});
-      addBubble('Chiamata terminata','sys');
-      sid=null; setState('off');
-      setTimeout(()=>setState('idle'),2000);
-    }
-  }, 500);
-}
+    setStatus('Connecting WebRTC...');
 
-// --- Call lifecycle ---
-async function toggleCall(){if(sid)endCall();else startCall();}
+    // 2. Create WebRTC peer connection
+    pc = new RTCPeerConnection();
 
-async function startCall(){
-  document.getElementById('transcript').innerHTML='';
-  setState('processing');
-  try{
-    const r=await fetch(API+'/conversations/start',{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({shop_id:document.getElementById('shop').value,caller_phone:'+39test'})});
-    const d=await r.json(); sid=d.session_id;
-    addBubble(d.greeting_text,'ai');
-    if(d.greeting_audio){setState('speaking');queueAudio(d.greeting_audio);awaitAudioThenListen();}
-    else startListening();
-  }catch(e){addBubble('Error: '+e.message,'sys');setState('idle');}
-}
+    // 3. Set up audio output (assistant voice)
+    const audioEl = document.createElement('audio');
+    audioEl.autoplay = true;
+    pc.ontrack = (e) => { audioEl.srcObject = e.streams[0]; };
 
-async function endCall(){
-  stopListening(); audioQueue=[]; isPlaying=false;
-  try{await fetch(API+'/conversations/'+sid,{method:'DELETE',credentials:'include'});}catch(e){}
-  addBubble('Call ended','sys');sid=null;setState('off');
-  setTimeout(()=>setState('idle'),2000);
-}
+    // 4. Get microphone and add track
+    const ms = await navigator.mediaDevices.getUserMedia({ audio: true });
+    pc.addTrack(ms.getTracks()[0]);
 
-function sendText(){
-  const inp=document.getElementById('txtIn'),t=inp.value.trim();
-  if(!t||!sid||busy)return; inp.value='';
-  stopListening(); addBubble(t,'user');
-  streamTurn({text:t});
-}
-
-// --- Mic + VAD ---
-async function startListening(){
-  if(!sid||busy)return;
-  setState('listening');
-  try{
-    stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true}});
-    const ctx=new AudioContext(),src=ctx.createMediaStreamSource(stream);
-    analyser=ctx.createAnalyser();analyser.fftSize=512;src.connect(analyser);monitorVol();
-    audioChunks=[];
-    mediaRecorder=new MediaRecorder(stream,{mimeType:'audio/webm'});
-    mediaRecorder.ondataavailable=e=>audioChunks.push(e.data);
-    mediaRecorder.onstop=()=>{
-      if(!audioChunks.length)return;
-      const blob=new Blob(audioChunks,{type:'audio/webm'});
-      const reader=new FileReader();
-      reader.onloadend=()=>{
-        const b64=reader.result.split(',')[1];
-        streamTurn({audio_base64:b64});
-      };
-      reader.readAsDataURL(blob);
+    // 5. Set up data channel for events
+    dc = pc.createDataChannel('oai-events');
+    dc.onopen = () => {
+      setState('active');
+      setStatus('');
+      addBubble(shopData.shop.welcome_message, 'ai');
     };
-    mediaRecorder.start();speechActive=false;hasSpoken=false;
-  }catch(e){addBubble('Mic unavailable','sys');}
+    dc.onmessage = handleRealtimeEvent;
+    dc.onclose = () => { if (state === 'active') endCall(); };
+
+    // 6. Create SDP offer
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+
+    // 7. Send offer to OpenAI Realtime API
+    const sdpResp = await fetch('https://api.openai.com/v1/realtime?model=gpt-4o-mini-realtime-preview-2024-12-17', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${ephemeralToken}`,
+        'Content-Type': 'application/sdp',
+      },
+      body: offer.sdp,
+    });
+
+    const answerSdp = await sdpResp.text();
+    await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
+
+  } catch (e) {
+    addBubble('Error: ' + e.message, 'sys');
+    setState('idle');
+    setStatus('');
+  }
 }
 
-function stopListening(){
-  clearTimeout(silenceTimer);cancelAnimationFrame(animFrame);
-  if(mediaRecorder&&mediaRecorder.state!=='inactive')try{mediaRecorder.stop();}catch(e){}
-  if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;}
-  analyser=null;
+function endCall() {
+  if (pc) { pc.close(); pc = null; }
+  dc = null;
+  addBubble('Chiamata terminata', 'sys');
+  setState('off');
+  setStatus('');
+  setTimeout(() => setState('idle'), 2000);
 }
 
-function monitorVol(){
-  if(!analyser||state!=='listening')return;
+function handleRealtimeEvent(event) {
+  const msg = JSON.parse(event.data);
 
-  // Frequency domain analysis for speech detection
-  const freqData=new Uint8Array(analyser.frequencyBinCount);
-  analyser.getByteFrequencyData(freqData);
+  switch (msg.type) {
+    // User speech transcription
+    case 'conversation.item.input_audio_transcription.completed':
+      addBubble(msg.transcript || '(audio)', 'user');
+      break;
 
-  // Check energy in speech frequency range (85-400 Hz)
-  // With fftSize=512, sampleRate=48000: each bin = 48000/512 = 93.75 Hz
-  // Speech range bins: ~1-4 (93-375 Hz)
-  const sampleRate=analyser.context?.sampleRate||48000;
-  const binHz=sampleRate/analyser.fftSize;
-  const speechLow=Math.floor(85/binHz);
-  const speechHigh=Math.ceil(400/binHz);
-  let speechEnergy=0,totalEnergy=0;
-  for(let i=speechLow;i<=speechHigh&&i<freqData.length;i++) speechEnergy+=freqData[i];
-  for(let i=0;i<freqData.length;i++) totalEnergy+=freqData[i];
+    // Assistant response text (streaming)
+    case 'response.audio_transcript.delta':
+      if (!currentBubble) currentBubble = addBubble('', 'ai');
+      currentBubble.textContent += msg.delta;
+      document.getElementById('transcript').scrollTop = 9e9;
+      break;
 
-  // Speech ratio: if most energy is in speech band, it's likely voice
-  const speechRatio=totalEnergy>0?speechEnergy/totalEnergy:0;
+    case 'response.audio_transcript.done':
+      currentBubble = null;
+      break;
 
-  // Also check RMS for volume
-  const timeData=new Float32Array(analyser.fftSize);
-  analyser.getFloatTimeDomainData(timeData);
-  let s=0;for(let i=0;i<timeData.length;i++)s+=timeData[i]*timeData[i];
-  const rms=Math.sqrt(s/timeData.length);
+    // Function call from the model
+    case 'response.function_call_arguments.done':
+      handleFunctionCall(msg);
+      break;
 
-  document.getElementById('volLv').style.width=Math.min(100,rms*500)+'%';
+    // Errors
+    case 'error':
+      addBubble('Error: ' + (msg.error?.message || JSON.stringify(msg.error)), 'sys');
+      break;
 
-  // Detect speech: needs both volume AND speech-frequency energy
-  const isSpeech=rms>SPEECH_RMS_THRESHOLD&&speechRatio>0.2;
+    case 'response.done':
+      // Check if there was an end-of-conversation signal
+      break;
+  }
+}
 
-  if(isSpeech){
-    hasSpoken=true;
-    speechActive=true;
-    clearTimeout(speechTimeout);
-    speechTimeout=setTimeout(()=>{
-      speechActive=false;
-      // Only send if the user actually spoke (not just background noise)
-      if(hasSpoken&&state==='listening'&&mediaRecorder&&mediaRecorder.state==='recording'){
-        hasSpoken=false;
-        mediaRecorder.stop();
-        if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;}
-      }
-    },SILENCE_MS);
+async function handleFunctionCall(msg) {
+  const name = msg.name;
+  const args = JSON.parse(msg.arguments || '{}');
+  const callId = msg.call_id;
+
+  setStatus(`Running ${name}...`);
+  let result = {};
+
+  try {
+    if (name === 'check_availability') {
+      // Call our booking engine via the Databricks App
+      const services = args.services || [];
+      const svcIds = resolveServiceIds(services);
+      const date = args.date || new Date().toISOString().split('T')[0];
+      const staffId = resolveStaffId(args.staff_name);
+
+      const params = new URLSearchParams({
+        service_ids: svcIds.join(','),
+        start_date: date,
+        end_date: date,
+      });
+      if (staffId) params.set('staff_id', staffId);
+
+      const resp = await fetch(
+        `${API}/api/v1/shops/${shopData.shop.id}/availability?${params}`,
+        { credentials: 'include' }
+      );
+      // This proxies to the booking engine through the gateway
+      // Actually we need to call booking engine directly
+      const bookingUrl = document.body.dataset.bookingUrl || API;
+      const resp2 = await fetch(
+        `https://virtual-assistant-booking-1444828305810485.aws.databricksapps.com/api/v1/shops/${shopData.shop.id}/availability?${params}`,
+        { credentials: 'include' }
+      );
+      result = await resp2.json();
+
+    } else if (name === 'get_services') {
+      result = { services: shopData.services };
+
+    } else if (name === 'create_customer') {
+      result = { created: true, name: args.name };
+    }
+  } catch (e) {
+    result = { error: e.message };
   }
 
-  animFrame=requestAnimationFrame(monitorVol);
+  setStatus('');
+
+  // Send function result back to the Realtime API
+  dc.send(JSON.stringify({
+    type: 'conversation.item.create',
+    item: {
+      type: 'function_call_output',
+      call_id: callId,
+      output: JSON.stringify(result),
+    },
+  }));
+
+  // Resume the conversation
+  dc.send(JSON.stringify({ type: 'response.create' }));
+}
+
+function resolveServiceIds(names) {
+  if (!shopData?.services) return [];
+  return names.map(n => {
+    const nl = n.toLowerCase();
+    const svc = shopData.services.find(s => s.name.toLowerCase().includes(nl));
+    return svc?.id;
+  }).filter(Boolean);
+}
+
+function resolveStaffId(name) {
+  if (!name || !shopData?.staff) return null;
+  const nl = name.toLowerCase();
+  const s = shopData.staff.find(s => s.name.toLowerCase().includes(nl));
+  return s?.id || null;
 }
 </script>
 </body>

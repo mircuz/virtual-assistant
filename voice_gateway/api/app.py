@@ -76,7 +76,9 @@ async def lifespan(app: FastAPI):
         app.state._gpt_audio_host = settings.databricks_host.replace("https://", "")
         app.state._gpt_audio_token = settings.databricks_token
         app.state._gpt_audio_endpoint = settings.gpt_audio_endpoint
-        print(f"[VG] LLM: {settings.llm_endpoint}  GPT-Audio: {settings.gpt_audio_endpoint}")
+        # OpenAI Realtime API key
+        app.state._openai_key = settings.openai_key
+        print(f"[VG] LLM: {settings.llm_endpoint}  GPT-Audio: {settings.gpt_audio_endpoint}  Realtime: {'enabled' if settings.openai_key else 'disabled'}")
     except Exception as e:
         import traceback
         print(f"[VG] Lifespan init FAILED: {e}\n{traceback.format_exc()}")
@@ -96,9 +98,10 @@ def create_app() -> FastAPI:
     )
     app.state.session_manager = SessionManager()
 
-    from voice_gateway.api.routes import conversations, ws
+    from voice_gateway.api.routes import conversations, ws, realtime
     app.include_router(conversations.router)
     app.include_router(ws.router)
+    app.include_router(realtime.router)
 
     @app.get("/health")
     async def health():

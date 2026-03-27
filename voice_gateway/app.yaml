@@ -16,3 +16,5 @@ env:
     value: "va_whisper_large_turbo_v3"
   - name: TTS_URL
     value: "https://virtual-assistant-tts-1444828305810485.aws.databricksapps.com"
+  - name: OPENAI_KEY
+    value: "REDACTED_OPENAI_KEY"
