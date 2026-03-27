@@ -26,7 +26,7 @@ config = EndpointCoreConfigInput(
             entity_name=MODEL_NAME,
             entity_version=str(MODEL_VERSION),
             workload_size="Small",      # Small / Medium / Large
-            workload_type="GPU_SMALL",  # CPU or GPU_SMALL — GPU recommended for speed
+            workload_type="CPU",  # CPU — no GPU available on this workspace
             scale_to_zero_enabled=True,
         )
     ]

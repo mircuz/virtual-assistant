@@ -65,9 +65,9 @@ async def lifespan(app: FastAPI):
         if settings.stt_endpoint:
             from voice_gateway.voice.stt import STTClient
             app.state.stt = STTClient(settings.databricks_host, settings.databricks_token, settings.stt_endpoint)
-        if settings.tts_endpoint:
+        if settings.tts_url:
             from voice_gateway.voice.tts import TTSClient
-            app.state.tts = TTSClient(settings.databricks_host, settings.databricks_token, settings.tts_endpoint)
+            app.state.tts = TTSClient(settings.tts_url, settings.databricks_token)
         print(f"[VG] STT={'enabled' if app.state.stt else 'disabled'} TTS={'enabled' if app.state.tts else 'disabled'}")
 
         from voice_gateway.llm import make_predict_fn

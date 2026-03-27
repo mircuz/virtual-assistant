@@ -7,7 +7,7 @@ class Settings(BaseSettings):
     databricks_host: str = ""
     databricks_token: str = ""
     stt_endpoint: str = "whisper-stt-endpoint"
-    tts_endpoint: str = "kokoro-tts-endpoint"
+    tts_url: str = ""
     intent_llm_endpoint: str = "databricks-meta-llama-3-1-8b-instruct"
     response_llm_endpoint: str = "databricks-meta-llama-3-3-70b-instruct"
 

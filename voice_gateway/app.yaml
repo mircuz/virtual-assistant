@@ -13,6 +13,6 @@ env:
   - name: RESPONSE_LLM_ENDPOINT
     value: "databricks-meta-llama-3-3-70b-instruct"
   - name: STT_ENDPOINT
-    value: "whisper-stt-endpoint"
-  - name: TTS_ENDPOINT
-    value: "kokoro-tts-endpoint"
+    value: "whisper"
+  - name: TTS_URL
+    value: "https://kokoro-tts-3488470091230896.aws.databricksapps.com"
