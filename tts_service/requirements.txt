@@ -1,5 +1,0 @@
-kokoro-onnx
-soundfile
-numpy
-fastapi
-uvicorn

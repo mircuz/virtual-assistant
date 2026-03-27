@@ -5,14 +5,12 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from voice_gateway.conversation.session import SessionManager
-
 logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Wire up real clients from env vars if available."""
+    """Wire up booking client and OpenAI Realtime API key."""
     try:
         from voice_gateway.config import Settings
         settings = Settings()
@@ -24,10 +22,8 @@ async def lifespan(app: FastAPI):
                 from databricks.sdk import WorkspaceClient
                 w = WorkspaceClient()
                 settings.databricks_host = settings.databricks_host or w.config.host
-                # Force token generation by making an API call
                 me = w.current_user.me()
                 print(f"[VG] SDK identity: {me.user_name}")
-                # Extract the token - authenticate() returns either a callable or a dict
                 auth = w.config.authenticate()
                 if callable(auth):
                     header = {}
@@ -39,7 +35,6 @@ async def lifespan(app: FastAPI):
                     token = ""
                     print(f"[VG] Unknown auth type: {type(auth)} = {str(auth)[:100]}")
                 if not token:
-                    # Try the internal API client headers
                     try:
                         api_client = w.api_client
                         token = getattr(api_client, '_token', '') or ''
@@ -60,25 +55,9 @@ async def lifespan(app: FastAPI):
         app.state.booking_client = bc
         print(f"[VG] Booking client connected: {settings.booking_engine_url}")
 
-        app.state.stt = None
-        app.state.tts = None
-        if settings.stt_endpoint:
-            from voice_gateway.voice.stt import STTClient
-            app.state.stt = STTClient(settings.databricks_host, settings.databricks_token, settings.stt_endpoint)
-        if settings.tts_url:
-            from voice_gateway.voice.tts import TTSClient
-            app.state.tts = TTSClient(settings.tts_url, settings.databricks_token)
-        print(f"[VG] STT={'enabled' if app.state.stt else 'disabled'} TTS={'enabled' if app.state.tts else 'disabled'}")
-
-        from voice_gateway.llm import make_predict_fn
-        app.state.llm_predict = make_predict_fn(settings.databricks_host, settings.databricks_token, settings.llm_endpoint)
-        # GPT-Audio for streaming LLM+TTS
-        app.state._gpt_audio_host = settings.databricks_host.replace("https://", "")
-        app.state._gpt_audio_token = settings.databricks_token
-        app.state._gpt_audio_endpoint = settings.gpt_audio_endpoint
         # OpenAI Realtime API key
         app.state._openai_key = settings.openai_key
-        print(f"[VG] LLM: {settings.llm_endpoint}  GPT-Audio: {settings.gpt_audio_endpoint}  Realtime: {'enabled' if settings.openai_key else 'disabled'}")
+        print(f"[VG] Realtime API: {'enabled' if settings.openai_key else 'disabled'}")
     except Exception as e:
         import traceback
         print(f"[VG] Lifespan init FAILED: {e}\n{traceback.format_exc()}")
@@ -96,11 +75,8 @@ def create_app() -> FastAPI:
         CORSMiddleware,
         allow_origins=["*"], allow_methods=["*"], allow_headers=["*"],
     )
-    app.state.session_manager = SessionManager()
 
-    from voice_gateway.api.routes import conversations, ws, realtime
-    app.include_router(conversations.router)
-    app.include_router(ws.router)
+    from voice_gateway.api.routes import realtime
     app.include_router(realtime.router)
 
     @app.get("/health")

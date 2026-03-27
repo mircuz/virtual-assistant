@@ -1,42 +1,44 @@
-# Hair Salon Voice Booking Assistant
+# Virtual Assistant — Voice Booking System
 
-AI-powered voice assistant for hair salon appointment booking, built on Databricks.
+AI-powered real-time voice assistant for appointment booking, built on Databricks and OpenAI Realtime API.
 
 ## Architecture
 
-Two independent services communicating over HTTP:
-
 ```
-Customer (phone/web) → Voice Gateway → Booking Engine → Lakebase (PostgreSQL)
-                        ↕
-                   Databricks Model Serving
-                   (Whisper STT, Kokoro TTS,
-                    Llama 8B, Llama 70B)
+Customer (browser/WebRTC) ←→ OpenAI Realtime API (voice + LLM)
+                                    ↕ function calls
+                              Voice Gateway (proxy)
+                                    ↕ HTTP
+                              Booking Engine (REST)
+                                    ↕ SQL
+                              Delta Tables (mircom_test.virtual_assistant)
 ```
 
-**Booking Engine** — Stateless REST API for shops, staff, services, customers, availability, and appointments.
+**Booking Engine** — Stateless REST API for shops, staff, services, customers, availability, and appointments. Backed by Delta tables on Databricks SQL warehouse.
 
-**Voice Gateway** — Conversation orchestrator handling STT/TTS, intent routing (small LLM), response generation (large LLM), and per-shop branded prompts.
+**Voice Gateway** — Generates ephemeral OpenAI Realtime API tokens with session config (tools, voice, VAD) and proxies function calls from the browser to the Booking Engine.
+
+**OpenAI Realtime API** — Handles STT, LLM reasoning, TTS, and voice activity detection natively via WebRTC. The browser connects directly to OpenAI for audio streaming.
 
 ## Project Structure
 
 ```
-booking_engine/          # REST API (FastAPI)
+booking_engine/          # REST API (FastAPI + Delta tables)
 ├── api/routes/          # Shops, customers, services, availability, appointments
-├── db/                  # Async psycopg connection pool + SQL queries
+├── db/                  # Databricks SQL connector + queries
 ├── config.py            # Settings from env vars
 └── app.yaml             # Databricks App config
 
-voice_gateway/           # Conversation service (FastAPI + WebSocket)
-├── api/routes/          # Start, turn, end conversation + WS scaffold
-├── conversation/        # Session, prompt assembler, intent router, response composer
-├── voice/               # STT + TTS endpoint clients
-├── clients/             # Booking Engine HTTP client
-├── llm.py               # Databricks Model Serving predict functions
+voice_gateway/           # Realtime API gateway (FastAPI)
+├── api/routes/
+│   └── realtime.py      # Token generation + function call proxy
+├── clients/
+│   └── booking_client.py # Booking Engine HTTP client
+├── static/
+│   └── index.html       # WebRTC phone-call UI
+├── config.py            # Settings from env vars
 └── app.yaml             # Databricks App config
 
-lakebase/sql/            # Database schema, seed data, functions
-tests/                   # 31 tests (pytest)
 docs/superpowers/        # Design spec + implementation plan
 ```
 
@@ -48,60 +50,47 @@ docs/superpowers/        # Design spec + implementation plan
 pip install -r requirements.txt
 ```
 
-### 2. Deploy Lakebase schema
-
-Run in order on your Databricks Lakebase instance:
-```
-lakebase/sql/01_schema.sql
-lakebase/sql/02_seed_data.sql
-lakebase/sql/03_functions.sql
-```
-
-### 3. Run Booking Engine
+### 2. Configure environment
 
 ```bash
-export LAKEBASE_HOST=your-lakebase-host
-export LAKEBASE_USER=your-user
-export LAKEBASE_PASSWORD=your-password
+export BOOKING_ENGINE_URL=https://your-booking-engine.databricksapps.com
+export OPENAI_KEY=sk-proj-...
+```
 
+Or create a `.env` file with these values.
+
+### 3. Run locally
+
+```bash
+# Booking Engine (requires Databricks SQL warehouse access)
 uvicorn booking_engine.api.app:create_app --factory --port 8000
-```
 
-### 4. Run Voice Gateway
-
-```bash
-export BOOKING_ENGINE_URL=http://localhost:8000
-export DATABRICKS_HOST=https://your-workspace.azuredatabricks.net
-export DATABRICKS_TOKEN=your-token
-
+# Voice Gateway
 uvicorn voice_gateway.api.app:create_app --factory --port 8001
 ```
 
-### 5. Test a conversation (text mode)
+Open http://localhost:8001 to access the phone-call UI.
+
+### 4. Test function calls
 
 ```bash
-# Start
-curl -s -X POST http://localhost:8001/conversations/start \
+# Check availability
+curl -s -X POST http://localhost:8001/api/v1/realtime/action \
   -H "Content-Type: application/json" \
-  -d '{"shop_id": "a0000000-0000-0000-0000-000000000001"}' | jq .
-
-# Send a turn
-curl -s -X POST http://localhost:8001/conversations/{session_id}/turn \
-  -H "Content-Type: application/json" \
-  -d '{"text": "Sono Maria, vorrei un taglio con Mirco domani"}' | jq .
-```
-
-## Running Tests
-
-```bash
-pytest tests/ -v
+  -d '{"shop_id": "a0000000-0000-0000-0000-000000000001", "function_name": "check_availability", "arguments": {"services": ["Taglio donna"], "date": "2026-03-28"}}' | jq .
 ```
 
 ## Deployment
 
-Both services deploy as Databricks Apps. See `booking_engine/app.yaml` and `voice_gateway/app.yaml`.
+Both services deploy as Databricks Apps on `e2-demo-field-eng`. See `booking_engine/app.yaml` and `voice_gateway/app.yaml`.
+
+- **Booking Engine**: `https://virtual-assistant-booking-1444828305810485.aws.databricksapps.com`
+- **Voice Gateway**: `https://virtual-assistant-gateway-1444828305810485.aws.databricksapps.com`
+- **Database**: `mircom_test.virtual_assistant` (9 Delta tables) via SQL warehouse `03560442e95cb440`
 
 ## Design Docs
 
 - [Design Spec](docs/superpowers/specs/2026-03-25-hair-salon-voice-assistant-design.md)
 - [Implementation Plan](docs/superpowers/plans/2026-03-25-hair-salon-voice-assistant.md)
+
+> Note: Design docs describe the original Lakebase/two-LLM architecture. The current implementation uses Delta tables and OpenAI Realtime API instead.

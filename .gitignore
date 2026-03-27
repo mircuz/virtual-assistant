@@ -9,3 +9,4 @@ dist/
 build/
 .env
 voice_gateway/app.yml
+voice_gateway/app.yaml
