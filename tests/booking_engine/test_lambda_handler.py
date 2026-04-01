@@ -1,7 +1,18 @@
 """Tests for the AWS Lambda Mangum handler."""
 from __future__ import annotations
 
+import importlib
+import sys
 from unittest.mock import patch, AsyncMock
+
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _clean_lambda_module():
+    sys.modules.pop("lambda_handler", None)
+    yield
+    sys.modules.pop("lambda_handler", None)
 
 
 class TestLambdaHandler:
