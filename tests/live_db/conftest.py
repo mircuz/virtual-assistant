@@ -48,18 +48,18 @@ def _get_db_settings() -> Settings | None:
 
 
 def _try_connect() -> bool:
-    """Attempt a real DB connection. Returns True if successful."""
+    """Quick connectivity check using raw asyncpg (not the app pool)."""
     settings = _get_db_settings()
     if settings is None:
         return False
     try:
+        import asyncpg
         loop = asyncio.new_event_loop()
-        loop.run_until_complete(connection.init_connection(settings))
-        result = loop.run_until_complete(
-            connection.execute("SELECT 1 AS ping")
-        )
+        conn = loop.run_until_complete(asyncpg.connect(dsn=settings.database_url))
+        result = loop.run_until_complete(conn.fetchrow("SELECT 1 AS ping"))
+        loop.run_until_complete(conn.close())
         loop.close()
-        return result is not None and len(result) > 0
+        return result is not None
     except Exception as e:
         logger.warning("Live DB connection failed: %s", e)
         return False
@@ -73,49 +73,46 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-@pytest.fixture(scope="session")
-def db_connection():
-    """Ensure we have an active DB connection for the test session."""
-    if not _db_available:
-        pytest.skip("No DB connection")
+@pytest.fixture(autouse=True)
+async def db_connection():
+    """Create a fresh connection pool for each test, close after."""
+    settings = _get_db_settings()
+    await connection.init_connection(settings)
     yield connection
+    await connection.close_connection()
 
 
 @pytest.fixture
-def cleanup_customer_ids():
+async def cleanup_customer_ids():
     """Collect customer IDs created during tests for cleanup."""
-    ids: list[str] = []
+    ids: list = []
     yield ids
-    if ids:
-        loop = asyncio.get_event_loop()
-        for cid in ids:
-            uid = UUID(cid) if isinstance(cid, str) else cid
-            try:
-                loop.run_until_complete(connection.execute_void(
-                    "DELETE FROM phone_contacts WHERE customer_id = $1", uid,
-                ))
-                loop.run_until_complete(connection.execute_void(
-                    "DELETE FROM customers WHERE id = $1", uid,
-                ))
-            except Exception as e:
-                logger.warning("Cleanup failed for customer %s: %s", cid, e)
+    for cid in ids:
+        uid = UUID(cid) if isinstance(cid, str) else cid
+        try:
+            await connection.execute_void(
+                "DELETE FROM phone_contacts WHERE customer_id = $1", uid,
+            )
+            await connection.execute_void(
+                "DELETE FROM customers WHERE id = $1", uid,
+            )
+        except Exception as e:
+            logger.warning("Cleanup failed for customer %s: %s", cid, e)
 
 
 @pytest.fixture
-def cleanup_appointment_ids():
+async def cleanup_appointment_ids():
     """Collect appointment IDs created during tests for cleanup."""
-    ids: list[str] = []
+    ids: list = []
     yield ids
-    if ids:
-        loop = asyncio.get_event_loop()
-        for aid in ids:
-            uid = UUID(aid) if isinstance(aid, str) else aid
-            try:
-                loop.run_until_complete(connection.execute_void(
-                    "DELETE FROM appointment_services WHERE appointment_id = $1", uid,
-                ))
-                loop.run_until_complete(connection.execute_void(
-                    "DELETE FROM appointments WHERE id = $1", uid,
-                ))
-            except Exception as e:
-                logger.warning("Cleanup failed for appointment %s: %s", aid, e)
+    for aid in ids:
+        uid = UUID(aid) if isinstance(aid, str) else aid
+        try:
+            await connection.execute_void(
+                "DELETE FROM appointment_services WHERE appointment_id = $1", uid,
+            )
+            await connection.execute_void(
+                "DELETE FROM appointments WHERE id = $1", uid,
+            )
+        except Exception as e:
+            logger.warning("Cleanup failed for appointment %s: %s", aid, e)
