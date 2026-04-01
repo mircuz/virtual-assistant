@@ -2,3 +2,4 @@ pydantic-settings
 asyncpg
 fastapi
 uvicorn
+mangum
