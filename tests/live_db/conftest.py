@@ -19,7 +19,7 @@ from booking_engine.db import connection
 
 logger = logging.getLogger(__name__)
 
-# ── Seed data IDs from 02_seed_data.sql (identical to Databricks version) ──
+# ── Seed data IDs from 02_seed_data.sql ──
 SHOP_ID = UUID("a0000000-0000-0000-0000-000000000001")
 SHOP_ID_2 = UUID("b0000000-0000-0000-0000-000000000002")
 

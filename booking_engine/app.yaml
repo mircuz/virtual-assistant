@@ -6,11 +6,5 @@ command:
   - --factory
 
 env:
-  - name: DATABRICKS_SERVER_HOSTNAME
-    value: "e2-demo-field-eng.cloud.databricks.com"
-  - name: DATABRICKS_HTTP_PATH
-    value: "/sql/1.0/warehouses/03560442e95cb440"
-  - name: DATABRICKS_CATALOG
-    value: "mircom_test"
-  - name: DATABRICKS_SCHEMA
-    value: "virtual_assistant"
+  - name: DATABASE_URL
+    value: ""
