@@ -1,4 +1,4 @@
 pydantic-settings
-databricks-sql-connector
+asyncpg
 fastapi
 uvicorn
