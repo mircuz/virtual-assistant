@@ -10,3 +10,4 @@ build/
 .env
 voice_gateway/app.yml
 voice_gateway/app.yaml
+=0.29.0
