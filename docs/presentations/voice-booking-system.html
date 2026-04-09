@@ -1,0 +1,890 @@
+<!DOCTYPE html>
+<html lang="en" style="scroll-snap-type: y mandatory; overflow-y: scroll; scroll-behavior: smooth;">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Voice AI on Databricks — How We Built It</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  /* ===== RESET & BASE ===== */
+  *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+  :root {
+    --navy: #0a0e27;
+    --navy-light: #111640;
+    --cyan: #00d4ff;
+    --magenta: #ff006e;
+    --white: #e8e8e8;
+    --white-dim: rgba(232, 232, 232, 0.6);
+    --cyan-glow: 0 0 20px rgba(0, 212, 255, 0.4), 0 0 60px rgba(0, 212, 255, 0.15);
+    --magenta-glow: 0 0 20px rgba(255, 0, 110, 0.4), 0 0 60px rgba(255, 0, 110, 0.15);
+    --card-bg: rgba(17, 22, 64, 0.6);
+    --card-border: rgba(0, 212, 255, 0.15);
+  }
+
+  html {
+    font-size: 16px;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    font-family: 'Inter', sans-serif;
+    background: var(--navy);
+    color: var(--white);
+    overflow-x: hidden;
+  }
+
+  /* ===== SLIDE BASE ===== */
+  .slide {
+    height: 100vh;
+    height: 100dvh;
+    overflow: hidden;
+    scroll-snap-align: start;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    padding: clamp(1.5rem, 4vw, 4rem);
+    text-align: center;
+  }
+
+  /* ===== TYPOGRAPHY ===== */
+  h1, h2, h3, h4 { font-family: 'Space Grotesk', sans-serif; font-weight: 700; }
+
+  .slide-heading {
+    font-size: clamp(2rem, 5vw, 4rem);
+    line-height: 1.1;
+    margin-bottom: clamp(0.5rem, 2vw, 1.5rem);
+  }
+
+  .slide-subheading {
+    font-size: clamp(1rem, 2.5vw, 1.6rem);
+    font-weight: 400;
+    color: var(--white-dim);
+    margin-bottom: clamp(0.5rem, 1.5vw, 1rem);
+    line-height: 1.4;
+  }
+
+  .slide-body {
+    font-size: clamp(0.85rem, 1.8vw, 1.15rem);
+    line-height: 1.6;
+    color: var(--white-dim);
+    max-width: 900px;
+  }
+
+  .glow-cyan { color: var(--cyan); text-shadow: var(--cyan-glow); }
+  .glow-magenta { color: var(--magenta); text-shadow: var(--magenta-glow); }
+
+  /* ===== PROGRESS BAR ===== */
+  #progress-bar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    height: 3px;
+    background: linear-gradient(90deg, var(--cyan), var(--magenta));
+    z-index: 1000;
+    transition: width 0.3s ease;
+    box-shadow: 0 0 10px var(--cyan);
+  }
+
+  /* ===== NAV DOTS ===== */
+  #nav-dots {
+    position: fixed;
+    right: clamp(0.75rem, 2vw, 1.5rem);
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 1000;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .nav-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    border: 1.5px solid var(--cyan);
+    background: transparent;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    padding: 0;
+  }
+
+  .nav-dot.active {
+    background: var(--cyan);
+    box-shadow: 0 0 8px var(--cyan);
+    transform: scale(1.3);
+  }
+
+  .nav-dot:hover {
+    background: rgba(0, 212, 255, 0.5);
+  }
+
+  /* ===== CARDS ===== */
+  .card-grid {
+    display: grid;
+    gap: clamp(0.75rem, 1.5vw, 1.25rem);
+    width: 100%;
+    max-width: 1100px;
+  }
+
+  .card-grid.cols-3 { grid-template-columns: repeat(3, 1fr); }
+  .card-grid.cols-2 { grid-template-columns: repeat(2, 1fr); }
+  .card-grid.cols-5 { grid-template-columns: repeat(5, 1fr); }
+  .card-grid.cols-6 { grid-template-columns: repeat(3, 1fr); }
+
+  .card {
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
+    border-radius: 12px;
+    padding: clamp(1rem, 2vw, 1.75rem);
+    backdrop-filter: blur(10px);
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+    text-align: left;
+  }
+
+  .card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 30px rgba(0, 212, 255, 0.1);
+  }
+
+  .card h4 {
+    font-size: clamp(0.9rem, 1.6vw, 1.15rem);
+    margin-bottom: 0.4rem;
+    font-family: 'Space Grotesk', sans-serif;
+  }
+
+  .card p {
+    font-size: clamp(0.75rem, 1.3vw, 0.95rem);
+    color: var(--white-dim);
+    line-height: 1.5;
+  }
+
+  .card.glow-border-cyan {
+    border-color: rgba(0, 212, 255, 0.35);
+    box-shadow: inset 0 0 20px rgba(0, 212, 255, 0.05), 0 0 15px rgba(0, 212, 255, 0.08);
+  }
+
+  .card.glow-border-magenta {
+    border-color: rgba(255, 0, 110, 0.35);
+    box-shadow: inset 0 0 20px rgba(255, 0, 110, 0.05), 0 0 15px rgba(255, 0, 110, 0.08);
+  }
+
+  /* ===== STAT CARD ===== */
+  .stat-card .stat-number {
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: clamp(1.8rem, 4vw, 3rem);
+    font-weight: 700;
+    line-height: 1.1;
+    margin-bottom: 0.4rem;
+  }
+
+  .stat-card .stat-label {
+    font-size: clamp(0.8rem, 1.4vw, 1rem);
+    color: var(--white-dim);
+    line-height: 1.4;
+  }
+
+  /* ===== ANIMATED GRID BACKGROUND ===== */
+  .grid-bg {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    z-index: 0;
+  }
+
+  .grid-bg::before {
+    content: '';
+    position: absolute;
+    inset: -50%;
+    background-image:
+      linear-gradient(rgba(0, 212, 255, 0.06) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0, 212, 255, 0.06) 1px, transparent 1px);
+    background-size: 60px 60px;
+    animation: gridMove 20s linear infinite;
+  }
+
+  .grid-bg::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(ellipse at 50% 50%, transparent 30%, var(--navy) 80%);
+  }
+
+  @keyframes gridMove {
+    from { transform: translate(0, 0); }
+    to { transform: translate(60px, 60px); }
+  }
+
+  /* ===== GLOW ORB ===== */
+  .glow-orb {
+    position: absolute;
+    border-radius: 50%;
+    filter: blur(80px);
+    opacity: 0.3;
+    animation: orbPulse 6s ease-in-out infinite alternate;
+    z-index: 0;
+  }
+
+  .glow-orb.cyan { background: var(--cyan); }
+  .glow-orb.magenta { background: var(--magenta); }
+
+  @keyframes orbPulse {
+    from { opacity: 0.15; transform: scale(1); }
+    to { opacity: 0.35; transform: scale(1.15); }
+  }
+
+  /* ===== FADE-UP ANIMATION ===== */
+  .fade-up {
+    opacity: 0;
+    transform: translateY(30px);
+    transition: opacity 0.7s ease, transform 0.7s ease;
+  }
+
+  .fade-up.visible {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  .fade-up.delay-1 { transition-delay: 0.1s; }
+  .fade-up.delay-2 { transition-delay: 0.2s; }
+  .fade-up.delay-3 { transition-delay: 0.3s; }
+  .fade-up.delay-4 { transition-delay: 0.4s; }
+  .fade-up.delay-5 { transition-delay: 0.5s; }
+
+  /* ===== FLOW DIAGRAM ===== */
+  .flow-diagram {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0;
+    width: 100%;
+    max-width: 1000px;
+    flex-wrap: nowrap;
+  }
+
+  .flow-box {
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
+    border-radius: 12px;
+    padding: clamp(0.8rem, 1.5vw, 1.5rem) clamp(1rem, 2vw, 2rem);
+    text-align: center;
+    flex: 1;
+    min-width: 0;
+    backdrop-filter: blur(10px);
+  }
+
+  .flow-box h4 {
+    font-size: clamp(0.85rem, 1.5vw, 1.1rem);
+    color: var(--white);
+    margin-bottom: 0.3rem;
+    font-family: 'Space Grotesk', sans-serif;
+  }
+
+  .flow-box .flow-tech {
+    font-size: clamp(0.65rem, 1.1vw, 0.85rem);
+    color: var(--cyan);
+    font-weight: 500;
+  }
+
+  .flow-arrow {
+    font-size: clamp(1rem, 2vw, 1.8rem);
+    color: var(--cyan);
+    flex-shrink: 0;
+    padding: 0 clamp(0.3rem, 0.8vw, 0.8rem);
+    text-shadow: var(--cyan-glow);
+  }
+
+  .flow-callout {
+    margin-top: clamp(1rem, 2vw, 1.75rem);
+    font-size: clamp(0.9rem, 1.8vw, 1.2rem);
+    font-weight: 600;
+    font-family: 'Space Grotesk', sans-serif;
+  }
+
+  /* ===== COMPACT CARD (Slide 5) ===== */
+  .compact-card {
+    text-align: left;
+    padding: clamp(0.75rem, 1.5vw, 1.25rem);
+  }
+
+  .compact-card .card-icon {
+    font-size: clamp(1.2rem, 2.2vw, 1.8rem);
+    margin-bottom: 0.3rem;
+    display: block;
+  }
+
+  .compact-card h4 {
+    font-size: clamp(0.8rem, 1.3vw, 1rem);
+    margin-bottom: 0.2rem;
+  }
+
+  .compact-card p {
+    font-size: clamp(0.7rem, 1.1vw, 0.85rem);
+  }
+
+  /* ===== TENANT VISUAL ===== */
+  .tenant-visual {
+    display: flex;
+    justify-content: center;
+    gap: clamp(0.5rem, 1.5vw, 1.5rem);
+    margin: clamp(0.75rem, 2vw, 1.5rem) 0;
+    flex-wrap: wrap;
+  }
+
+  .tenant-box {
+    width: clamp(70px, 10vw, 110px);
+    height: clamp(70px, 10vw, 110px);
+    border-radius: 12px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    font-size: clamp(0.6rem, 1vw, 0.8rem);
+    font-weight: 500;
+    gap: 4px;
+    border: 1px solid;
+    transition: transform 0.3s ease;
+  }
+
+  .tenant-box:hover { transform: scale(1.05); }
+
+  .tenant-box .tenant-icon { font-size: clamp(1.2rem, 2.5vw, 2rem); }
+
+  .tenant-box:nth-child(1) { border-color: rgba(0, 212, 255, 0.4); background: rgba(0, 212, 255, 0.08); }
+  .tenant-box:nth-child(2) { border-color: rgba(255, 0, 110, 0.4); background: rgba(255, 0, 110, 0.08); }
+  .tenant-box:nth-child(3) { border-color: rgba(0, 212, 255, 0.4); background: rgba(0, 212, 255, 0.08); }
+  .tenant-box:nth-child(4) { border-color: rgba(255, 0, 110, 0.4); background: rgba(255, 0, 110, 0.08); }
+  .tenant-box:nth-child(5) { border-color: rgba(0, 212, 255, 0.4); background: rgba(0, 212, 255, 0.08); }
+
+  .platform-bar {
+    width: 100%;
+    max-width: 600px;
+    padding: clamp(0.6rem, 1.2vw, 1rem);
+    background: linear-gradient(90deg, rgba(0, 212, 255, 0.12), rgba(255, 0, 110, 0.12));
+    border: 1px solid rgba(0, 212, 255, 0.25);
+    border-radius: 10px;
+    text-align: center;
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: clamp(0.8rem, 1.4vw, 1rem);
+    font-weight: 600;
+    color: var(--cyan);
+    margin-bottom: clamp(0.5rem, 1vw, 0.75rem);
+  }
+
+  .platform-connector {
+    width: 2px;
+    height: clamp(15px, 2vw, 25px);
+    background: linear-gradient(to bottom, var(--cyan), transparent);
+    margin: 0 auto;
+  }
+
+  /* ===== CHECK LIST (Slide 8) ===== */
+  .check-list {
+    list-style: none;
+    text-align: left;
+    max-width: 700px;
+    width: 100%;
+  }
+
+  .check-list li {
+    font-size: clamp(0.85rem, 1.6vw, 1.1rem);
+    padding: clamp(0.4rem, 0.8vw, 0.6rem) 0;
+    border-bottom: 1px solid rgba(0, 212, 255, 0.08);
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+  }
+
+  .check-list li::before {
+    content: '\2713';
+    color: var(--cyan);
+    font-weight: 700;
+    font-size: 1.1em;
+    flex-shrink: 0;
+  }
+
+  /* ===== TIMELINE (Slide 9) ===== */
+  .timeline {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: clamp(0.75rem, 1.5vw, 1.5rem);
+    width: 100%;
+    max-width: 1000px;
+  }
+
+  .timeline-phase {
+    background: var(--card-bg);
+    border-radius: 12px;
+    padding: clamp(1rem, 2vw, 1.75rem);
+    text-align: left;
+    border: 1px solid var(--card-border);
+    transition: transform 0.3s ease;
+  }
+
+  .timeline-phase:hover { transform: translateY(-2px); }
+
+  .timeline-phase:nth-child(1) { border-color: rgba(0, 212, 255, 0.2); }
+  .timeline-phase:nth-child(2) { border-color: rgba(0, 212, 255, 0.35); box-shadow: 0 0 20px rgba(0, 212, 255, 0.06); }
+  .timeline-phase:nth-child(3) { border-color: rgba(255, 0, 110, 0.35); box-shadow: 0 0 25px rgba(255, 0, 110, 0.08); }
+
+  .phase-label {
+    font-family: 'Space Grotesk', sans-serif;
+    font-weight: 700;
+    font-size: clamp(0.7rem, 1.2vw, 0.9rem);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    margin-bottom: 0.5rem;
+  }
+
+  .timeline-phase:nth-child(1) .phase-label { color: var(--white-dim); }
+  .timeline-phase:nth-child(2) .phase-label { color: var(--cyan); }
+  .timeline-phase:nth-child(3) .phase-label { color: var(--magenta); }
+
+  .timeline-phase ul {
+    list-style: none;
+    padding: 0;
+  }
+
+  .timeline-phase ul li {
+    font-size: clamp(0.7rem, 1.2vw, 0.9rem);
+    color: var(--white-dim);
+    padding: 0.2rem 0;
+    line-height: 1.4;
+  }
+
+  .timeline-phase ul li::before {
+    content: '\2022';
+    margin-right: 0.5rem;
+    color: inherit;
+  }
+
+  .timeline-phase:nth-child(1) ul li::before { color: var(--white-dim); }
+  .timeline-phase:nth-child(2) ul li::before { color: var(--cyan); }
+  .timeline-phase:nth-child(3) ul li::before { color: var(--magenta); }
+
+  /* ===== CLOSING SLIDE ===== */
+  .closing-heading {
+    font-size: clamp(2.2rem, 6vw, 5rem);
+    line-height: 1.1;
+    animation: glowPulse 3s ease-in-out infinite alternate;
+  }
+
+  @keyframes glowPulse {
+    from {
+      text-shadow: 0 0 20px rgba(0, 212, 255, 0.3), 0 0 60px rgba(0, 212, 255, 0.1);
+    }
+    to {
+      text-shadow: 0 0 30px rgba(0, 212, 255, 0.6), 0 0 80px rgba(0, 212, 255, 0.25), 0 0 120px rgba(255, 0, 110, 0.1);
+    }
+  }
+
+  /* ===== TITLE SLIDE SPECIAL ===== */
+  .title-heading {
+    font-size: clamp(2.5rem, 7vw, 5.5rem);
+    background: linear-gradient(135deg, var(--cyan), var(--white), var(--magenta));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    animation: titleGlow 4s ease-in-out infinite alternate;
+    position: relative;
+  }
+
+  @keyframes titleGlow {
+    from { filter: drop-shadow(0 0 15px rgba(0, 212, 255, 0.4)); }
+    to { filter: drop-shadow(0 0 25px rgba(255, 0, 110, 0.4)); }
+  }
+
+  .tagline {
+    font-size: clamp(0.7rem, 1.3vw, 0.95rem);
+    color: var(--white-dim);
+    letter-spacing: 0.05em;
+    margin-top: clamp(0.5rem, 1.5vw, 1rem);
+    opacity: 0.7;
+  }
+
+  /* ===== SMALL NOTE ===== */
+  .note {
+    font-size: clamp(0.65rem, 1.1vw, 0.85rem);
+    color: var(--white-dim);
+    opacity: 0.6;
+    margin-top: clamp(0.75rem, 1.5vw, 1.25rem);
+    font-style: italic;
+  }
+
+  /* ===== SLIDE CONTENT WRAPPER ===== */
+  .slide-content {
+    position: relative;
+    z-index: 1;
+    width: 100%;
+    max-width: 1100px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+
+  /* ===== REDUCED MOTION ===== */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01s !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01s !important;
+    }
+    .fade-up { opacity: 1; transform: none; }
+    html { scroll-behavior: auto; }
+  }
+
+  /* ===== RESPONSIVE ===== */
+  @media (max-width: 768px) {
+    .card-grid.cols-3, .card-grid.cols-5, .card-grid.cols-6 { grid-template-columns: repeat(2, 1fr); }
+    .flow-diagram { flex-wrap: wrap; gap: 0.5rem; }
+    .flow-arrow { display: none; }
+    .flow-diagram .flow-box { flex: 0 0 calc(50% - 0.5rem); }
+    .timeline { grid-template-columns: 1fr; }
+    .tenant-visual { gap: 0.5rem; }
+    .tenant-box { width: 60px; height: 60px; }
+    #nav-dots { right: 0.4rem; gap: 8px; }
+    .nav-dot { width: 7px; height: 7px; }
+  }
+
+  @media (max-width: 480px) {
+    .card-grid.cols-3, .card-grid.cols-5, .card-grid.cols-6, .card-grid.cols-2 { grid-template-columns: 1fr; }
+    .slide { padding: clamp(1rem, 3vw, 2rem) clamp(1rem, 3vw, 1.5rem); }
+  }
+</style>
+</head>
+<body>
+
+<!-- Progress Bar -->
+<div id="progress-bar" style="width: 0%;"></div>
+
+<!-- Nav Dots -->
+<nav id="nav-dots" aria-label="Slide navigation"></nav>
+
+<!-- ==================== SLIDE 1: TITLE ==================== -->
+<section class="slide" id="slide-0">
+  <div class="grid-bg"></div>
+  <div class="glow-orb cyan" style="width: 300px; height: 300px; top: 15%; left: 10%;"></div>
+  <div class="glow-orb magenta" style="width: 250px; height: 250px; bottom: 15%; right: 10%;"></div>
+  <div class="slide-content">
+    <h1 class="title-heading fade-up">Voice AI on Databricks</h1>
+    <p class="slide-subheading fade-up delay-1" style="margin-top: clamp(0.5rem, 1.5vw, 1rem);">How We Built a Real-Time Voice Agent &mdash; and How You Can Too</p>
+    <p class="tagline fade-up delay-2">OpenAI Realtime &middot; FastAPI &middot; Databricks SQL &middot; Scale-to-Zero</p>
+  </div>
+</section>
+
+<!-- ==================== SLIDE 2: THE PATTERN ==================== -->
+<section class="slide" id="slide-1">
+  <div class="glow-orb cyan" style="width: 200px; height: 200px; top: 10%; right: 20%;"></div>
+  <div class="slide-content">
+    <h2 class="slide-heading fade-up">The <span class="glow-cyan">Pattern</span></h2>
+    <p class="slide-subheading fade-up delay-1">A voice agent that reasons, acts, and talks &mdash; in real time</p>
+    <div class="flow-diagram fade-up delay-2" style="margin-top: clamp(1.5rem, 3vw, 2.5rem);">
+      <div class="flow-box">
+        <h4>Phone / WebRTC</h4>
+        <span class="flow-tech">Inbound call</span>
+      </div>
+      <div class="flow-arrow">&rarr;</div>
+      <div class="flow-box" style="border-color: rgba(0, 212, 255, 0.4);">
+        <h4>OpenAI Realtime</h4>
+        <span class="flow-tech">STT + LLM + TTS</span>
+      </div>
+      <div class="flow-arrow">&rarr;</div>
+      <div class="flow-box" style="border-color: rgba(255, 0, 110, 0.3);">
+        <h4>Function Calls</h4>
+        <span class="flow-tech">Your business logic</span>
+      </div>
+      <div class="flow-arrow">&rarr;</div>
+      <div class="flow-box">
+        <h4>Databricks SQL</h4>
+        <span class="flow-tech">Structured data</span>
+      </div>
+    </div>
+    <p class="flow-callout fade-up delay-3">The LLM decides <span class="glow-cyan">when</span> to call your API &mdash; you define <span class="glow-magenta">what</span> it can do</p>
+  </div>
+</section>
+
+<!-- ==================== SLIDE 3: HOW IT WORKS ==================== -->
+<section class="slide" id="slide-2">
+  <div class="glow-orb magenta" style="width: 250px; height: 250px; bottom: 20%; left: 5%;"></div>
+  <div class="slide-content">
+    <h2 class="slide-heading fade-up">How It <span class="glow-magenta">Actually Works</span></h2>
+    <div class="card-grid cols-2 fade-up delay-2" style="margin-top: clamp(1.5rem, 3vw, 2.5rem);">
+      <div class="card glow-border-cyan">
+        <h4 class="glow-cyan">Voice Gateway <span style="font-weight: 400; font-size: 0.8em; opacity: 0.6;">(Fly.io)</span></h4>
+        <p>Generates ephemeral OpenAI session tokens with tools &amp; voice config. Proxies function calls from the browser to the booking API. Stateless &mdash; scales from zero.</p>
+      </div>
+      <div class="card glow-border-magenta">
+        <h4 class="glow-magenta">Booking Engine <span style="font-weight: 400; font-size: 0.8em; opacity: 0.6;">(FastAPI)</span></h4>
+        <p>9 REST endpoints: shops, staff, services, customers, availability, appointments. Pure business logic &mdash; no AI dependency. Runs on Lambda or any container.</p>
+      </div>
+    </div>
+    <div class="card-grid cols-2 fade-up delay-3" style="margin-top: clamp(0.5rem, 1vw, 0.75rem);">
+      <div class="card glow-border-cyan">
+        <h4 class="glow-cyan">OpenAI Realtime API</h4>
+        <p>Browser connects directly via WebRTC. Handles all audio streaming, speech-to-text, LLM reasoning, and text-to-speech natively. Sub-second latency.</p>
+      </div>
+      <div class="card glow-border-magenta">
+        <h4 class="glow-magenta">Databricks SQL Warehouse</h4>
+        <p>All state lives in Delta tables &mdash; multi-tenant, ACID, queryable. Availability algorithm runs as SQL. Same warehouse powers analytics.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== SLIDE 4: THE TOOLS ==================== -->
+<section class="slide" id="slide-3">
+  <div class="glow-orb cyan" style="width: 200px; height: 200px; top: 20%; left: 15%;"></div>
+  <div class="slide-content">
+    <h2 class="slide-heading fade-up">5 Tools = <span class="glow-cyan">Complete Agent</span></h2>
+    <p class="slide-subheading fade-up delay-1">Define JSON schemas &rarr; OpenAI calls them &rarr; you execute &rarr; voice responds</p>
+    <div class="card-grid cols-5 fade-up delay-2" style="margin-top: clamp(1rem, 2.5vw, 2rem); grid-template-columns: repeat(5, 1fr);">
+      <div class="card compact-card glow-border-cyan" style="text-align: center;">
+        <span class="card-icon">&#128269;</span>
+        <h4>get_services</h4>
+        <p>List &amp; prices</p>
+      </div>
+      <div class="card compact-card glow-border-cyan" style="text-align: center;">
+        <span class="card-icon">&#128197;</span>
+        <h4>check_availability</h4>
+        <p>Open slots</p>
+      </div>
+      <div class="card compact-card glow-border-magenta" style="text-align: center;">
+        <span class="card-icon">&#128100;</span>
+        <h4>create_customer</h4>
+        <p>New caller</p>
+      </div>
+      <div class="card compact-card glow-border-magenta" style="text-align: center;">
+        <span class="card-icon">&#9989;</span>
+        <h4>book_appointment</h4>
+        <p>Reserve slot</p>
+      </div>
+      <div class="card compact-card glow-border-cyan" style="text-align: center;">
+        <span class="card-icon">&#128203;</span>
+        <h4>list_appointments</h4>
+        <p>View bookings</p>
+      </div>
+    </div>
+    <p class="note fade-up delay-3">Swap these 5 tools for your domain &mdash; same architecture, different agent</p>
+  </div>
+</section>
+
+<!-- ==================== SLIDE 5: ADAPT THIS ==================== -->
+<section class="slide" id="slide-4">
+  <div class="glow-orb cyan" style="width: 280px; height: 280px; bottom: 10%; right: 15%;"></div>
+  <div class="glow-orb magenta" style="width: 150px; height: 150px; top: 10%; left: 10%;"></div>
+  <div class="slide-content">
+    <h2 class="slide-heading fade-up">Adapt This for <span class="glow-magenta">Your Use Case</span></h2>
+    <div class="card-grid cols-6 fade-up delay-2" style="margin-top: clamp(1rem, 2.5vw, 2rem);">
+      <div class="card compact-card glow-border-cyan">
+        <span class="card-icon">&#128172;</span>
+        <h4>Customer Support</h4>
+        <p>FAQs, order status, troubleshooting</p>
+      </div>
+      <div class="card compact-card glow-border-magenta">
+        <span class="card-icon">&#127919;</span>
+        <h4>Lead Qualification</h4>
+        <p>Inbound sales, routing, surveys</p>
+      </div>
+      <div class="card compact-card glow-border-cyan">
+        <span class="card-icon">&#128230;</span>
+        <h4>Order by Phone</h4>
+        <p>Voice commerce, delivery scheduling</p>
+      </div>
+      <div class="card compact-card glow-border-magenta">
+        <span class="card-icon">&#128295;</span>
+        <h4>Field Dispatch</h4>
+        <p>Technician scheduling, on-call routing</p>
+      </div>
+      <div class="card compact-card glow-border-cyan">
+        <span class="card-icon">&#128187;</span>
+        <h4>Internal Helpdesk</h4>
+        <p>IT support, HR onboarding queries</p>
+      </div>
+      <div class="card compact-card glow-border-magenta">
+        <span class="card-icon">&#127973;</span>
+        <h4>Patient Intake</h4>
+        <p>Clinics, pharmacies, insurance triage</p>
+      </div>
+    </div>
+    <p class="note fade-up delay-3">Same stack: OpenAI Realtime + FastAPI tools + Databricks &mdash; just different function definitions</p>
+  </div>
+</section>
+
+<!-- ==================== SLIDE 6: TRY IT ==================== -->
+<section class="slide" id="slide-5">
+  <div class="glow-orb magenta" style="width: 200px; height: 200px; top: 15%; left: 10%;"></div>
+  <div class="slide-content">
+    <h2 class="slide-heading fade-up">Build Your Own in <span class="glow-cyan">an Afternoon</span></h2>
+    <div class="card-grid cols-2 fade-up delay-2" style="margin-top: clamp(1.5rem, 3vw, 2.5rem);">
+      <div class="card glow-border-cyan">
+        <h4 class="glow-cyan">1. Define your tools</h4>
+        <p>Write JSON schemas for what the AI can do. Each tool = one function call (check stock, create ticket, query a table &mdash; whatever your domain needs).</p>
+      </div>
+      <div class="card glow-border-magenta">
+        <h4 class="glow-magenta">2. Build the API</h4>
+        <p>FastAPI endpoint per tool. Read/write to Databricks SQL. The voice gateway proxies calls &mdash; your API doesn't know it's talking to a voice agent.</p>
+      </div>
+      <div class="card glow-border-cyan">
+        <h4 class="glow-cyan">3. Configure the voice</h4>
+        <p>Set the system prompt, personality, and voice. OpenAI handles all audio &mdash; STT, reasoning, TTS. You never touch audio bytes.</p>
+      </div>
+      <div class="card glow-border-magenta">
+        <h4 class="glow-magenta">4. Deploy &amp; iterate</h4>
+        <p>Lambda for API, Fly.io for gateway. Both scale to zero. Test via browser WebRTC, then connect Twilio for real phone numbers.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== SLIDE 7: CLOSING ==================== -->
+<section class="slide" id="slide-6">
+  <div class="grid-bg"></div>
+  <div class="glow-orb cyan" style="width: 350px; height: 350px; top: 30%; left: 20%;"></div>
+  <div class="glow-orb magenta" style="width: 300px; height: 300px; bottom: 20%; right: 15%;"></div>
+  <div class="slide-content">
+    <h1 class="closing-heading glow-cyan fade-up">Your Data Already Knows the Answers</h1>
+    <p class="slide-subheading fade-up delay-1" style="margin-top: clamp(1rem, 2vw, 1.5rem);">Now give it a voice.</p>
+    <p class="tagline fade-up delay-2" style="margin-top: clamp(1.5rem, 3vw, 2rem); opacity: 0.5;">Questions?</p>
+  </div>
+</section>
+
+<script>
+(function() {
+  'use strict';
+
+  const TOTAL_SLIDES = 7;
+  let currentSlide = 0;
+  let isScrolling = false;
+  let scrollTimeout;
+
+  // Build nav dots
+  const navContainer = document.getElementById('nav-dots');
+  for (let i = 0; i < TOTAL_SLIDES; i++) {
+    const dot = document.createElement('button');
+    dot.className = 'nav-dot' + (i === 0 ? ' active' : '');
+    dot.setAttribute('aria-label', 'Go to slide ' + (i + 1));
+    dot.dataset.index = i;
+    dot.addEventListener('click', function() { goToSlide(parseInt(this.dataset.index)); });
+    navContainer.appendChild(dot);
+  }
+
+  const dots = document.querySelectorAll('.nav-dot');
+  const progressBar = document.getElementById('progress-bar');
+  const slides = document.querySelectorAll('.slide');
+
+  function updateUI(index) {
+    currentSlide = index;
+    dots.forEach(function(d, i) { d.classList.toggle('active', i === index); });
+    progressBar.style.width = ((index / (TOTAL_SLIDES - 1)) * 100) + '%';
+    triggerFadeUps(index);
+  }
+
+  function goToSlide(index) {
+    if (index < 0 || index >= TOTAL_SLIDES) return;
+    const target = document.getElementById('slide-' + index);
+    if (target) {
+      target.scrollIntoView({ behavior: 'smooth' });
+      updateUI(index);
+    }
+  }
+
+  // Keyboard navigation
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowRight' || e.key === ' ' || e.key === 'PageDown') {
+      e.preventDefault();
+      goToSlide(currentSlide + 1);
+    } else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft' || e.key === 'PageUp') {
+      e.preventDefault();
+      goToSlide(currentSlide - 1);
+    } else if (e.key === 'Home') {
+      e.preventDefault();
+      goToSlide(0);
+    } else if (e.key === 'End') {
+      e.preventDefault();
+      goToSlide(TOTAL_SLIDES - 1);
+    }
+  });
+
+  // Wheel navigation (debounced)
+  var wheelCooldown = false;
+  document.addEventListener('wheel', function(e) {
+    if (wheelCooldown) return;
+    wheelCooldown = true;
+    setTimeout(function() { wheelCooldown = false; }, 800);
+
+    if (e.deltaY > 30) {
+      goToSlide(currentSlide + 1);
+    } else if (e.deltaY < -30) {
+      goToSlide(currentSlide - 1);
+    }
+  }, { passive: true });
+
+  // Touch navigation
+  var touchStartY = 0;
+  document.addEventListener('touchstart', function(e) {
+    touchStartY = e.touches[0].clientY;
+  }, { passive: true });
+
+  document.addEventListener('touchend', function(e) {
+    var diff = touchStartY - e.changedTouches[0].clientY;
+    if (Math.abs(diff) > 50) {
+      if (diff > 0) {
+        goToSlide(currentSlide + 1);
+      } else {
+        goToSlide(currentSlide - 1);
+      }
+    }
+  }, { passive: true });
+
+  // Scroll-based detection (for scroll-snap sync)
+  var scrollDetectTimeout;
+  document.querySelector('html').addEventListener('scroll', function() {
+    clearTimeout(scrollDetectTimeout);
+    scrollDetectTimeout = setTimeout(function() {
+      var scrollTop = document.documentElement.scrollTop || document.body.scrollTop;
+      var windowH = window.innerHeight;
+      var idx = Math.round(scrollTop / windowH);
+      if (idx !== currentSlide && idx >= 0 && idx < TOTAL_SLIDES) {
+        updateUI(idx);
+      }
+    }, 100);
+  }, { passive: true });
+
+  // Fade-up animation using IntersectionObserver
+  function triggerFadeUps(slideIndex) {
+    var slide = document.getElementById('slide-' + slideIndex);
+    if (!slide) return;
+    var elements = slide.querySelectorAll('.fade-up');
+    elements.forEach(function(el) { el.classList.add('visible'); });
+  }
+
+  // Also use IntersectionObserver as fallback
+  if ('IntersectionObserver' in window) {
+    var observer = new IntersectionObserver(function(entries) {
+      entries.forEach(function(entry) {
+        if (entry.isIntersecting) {
+          var slide = entry.target;
+          var fadeEls = slide.querySelectorAll('.fade-up');
+          fadeEls.forEach(function(el) { el.classList.add('visible'); });
+
+          // Update nav state
+          var idx = parseInt(slide.id.replace('slide-', ''));
+          if (!isNaN(idx)) { updateUI(idx); }
+        }
+      });
+    }, { threshold: 0.5 });
+
+    slides.forEach(function(s) { observer.observe(s); });
+  }
+
+  // Trigger first slide animations
+  triggerFadeUps(0);
+})();
+</script>
+</body>
+</html>
