@@ -27,7 +27,7 @@ class TestGetRealtimeToken:
 
         openai_response = {
             "client_secret": {"value": "ephemeral-token-123", "expires_at": 9999999999},
-            "model": "gpt-4o-mini-realtime-preview-2024-12-17",
+            "model": "gpt-realtime",
         }
 
         with patch("voice_gateway.api.routes.realtime.httpx.AsyncClient") as MockClient:
@@ -48,6 +48,13 @@ class TestGetRealtimeToken:
         assert data["shop"]["name"] == "Salone Bella"
         assert len(data["services"]) == 2
         assert len(data["staff"]) == 2
+
+        # Verify the payload sent to OpenAI has the new session config
+        sent_json = mock_client_instance.post.call_args.kwargs["json"]
+        assert sent_json["model"] == "gpt-realtime"
+        assert sent_json["voice"] == "marin"
+        assert sent_json["turn_detection"]["type"] == "semantic_vad"
+        assert sent_json["input_audio_transcription"]["model"] == "gpt-4o-transcribe"
 
     def test_returns_404_shop_not_found(self, client, mock_booking):
         mock_booking.get_shop.return_value = None

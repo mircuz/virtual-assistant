@@ -14,7 +14,7 @@ from pydantic import BaseModel
 router = APIRouter(prefix="/api/v1/realtime", tags=["realtime"])
 
 OPENAI_REALTIME_URL = "https://api.openai.com/v1/realtime/sessions"
-OPENAI_MODEL = "gpt-4o-mini-realtime-preview-2024-12-17"
+OPENAI_MODEL = "gpt-realtime"
 
 
 @router.post("/token")
@@ -39,20 +39,34 @@ async def get_realtime_token(request: Request, shop_id: str = Query(...)):
     staff_str = ", ".join(s.get("full_name", "") for s in staff)
 
     instructions = (
-        f"{shop.get('personality', '')}\n"
+        "# IDENTITÀ\n"
+        f"{shop.get('personality', '')}\n\n"
+        "# COME PARLI\n"
         f"{shop.get('tone_instructions', '')}\n\n"
-        f"Data e ora corrente: {now}\n"
-        f"Servizi disponibili: {services_str}\n"
-        f"Staff disponibile: {staff_str}\n\n"
-        "REGOLE:\n"
-        "- Rispondi SEMPRE in italiano\n"
-        "- Sii breve e naturale, come una vera telefonata\n"
-        "- Tono allegro, solare e accogliente\n"
-        "- NON usare emoji o simboli\n"
-        "- Se il cliente dice il suo nome, salutalo e chiedi come puoi aiutare\n"
-        "- Se chiede servizi, elencali brevemente\n"
-        "- Se vuole prenotare o sapere la disponibilità, usa lo strumento check_availability\n"
-        "- Se il cliente saluta per andarsene, salutalo calorosamente e chiudi"
+        "Regole di stile (sempre valide):\n"
+        "- Frasi brevi, come al telefono — mai da email\n"
+        '- Usa riempitivi naturali: "allora…", "ok perfetto", "dimmi", "un attimo che controllo", "mmm", "aspetta"\n'
+        '- Quando controlli qualcosa dillo ad alta voce: "un secondo ti cerco l\'agenda…"\n'
+        '- Quando non capisci: "scusa mi è sfuggito, puoi ripetere?"\n'
+        '- Quando confermi: "perfetto", "ci siamo", "benissimo"\n'
+        "- Non ripetere tutti i dati del cliente — rispondi, non riassumere\n"
+        "- Non sei un'intelligenza artificiale. Se te lo chiedono, sei la ragazza che risponde al telefono del salone.\n\n"
+        "# ESEMPI DI COME SUONA AL TELEFONO\n"
+        'Cliente: "Volevo prenotare un taglio"\n'
+        'Tu: "Ok perfetto, quando ti andrebbe bene?"\n\n'
+        'Cliente: "Giovedì pomeriggio?"\n'
+        'Tu: "Allora… un attimo che controllo. Giovedì ho libero alle 15:30 o alle 17, cosa preferisci?"\n\n'
+        'Cliente: "Aspetta, mi fai anche la piega?"\n'
+        'Tu: "Certo, aggiungo la piega — cambia un po\' la durata ma ci sta."\n\n'
+        "# CONTESTO ATTUALE\n"
+        f"Data e ora: {now}\n"
+        f"Servizi: {services_str}\n"
+        f"Staff in servizio: {staff_str}\n\n"
+        "# STRUMENTI\n"
+        "Hai gli strumenti: check_availability, get_services, create_customer, book_appointment, list_appointments.\n"
+        'Usali quando serve, ma non annunciarli. Dì "un attimo che controllo" e chiamali. Il cliente non deve sapere che esiste uno strumento.\n\n'
+        "# CHIUSURA\n"
+        'Quando il cliente saluta, chiudi calorosa: "Perfetto, ci vediamo presto! Buona giornata!"'
     )
 
     # Define tools for function calling
@@ -127,17 +141,16 @@ async def get_realtime_token(request: Request, shop_id: str = Query(...)):
             headers={"Authorization": f"Bearer {openai_key}", "Content-Type": "application/json"},
             json={
                 "model": OPENAI_MODEL,
-                "voice": "coral",
+                "voice": "marin",
                 "instructions": instructions,
                 "tools": tools,
                 "turn_detection": {
-                    "type": "server_vad",
-                    "threshold": 0.5,
-                    "prefix_padding_ms": 300,
-                    "silence_duration_ms": 800,
+                    "type": "semantic_vad",
+                    "eagerness": "low",
                     "create_response": True,
+                    "interrupt_response": True,
                 },
-                "input_audio_transcription": {"model": "gpt-4o-mini-transcribe"},
+                "input_audio_transcription": {"model": "gpt-4o-transcribe"},
             },
         )
         resp.raise_for_status()
